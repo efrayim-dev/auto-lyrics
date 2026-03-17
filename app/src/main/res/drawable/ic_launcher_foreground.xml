@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Background circle -->
+    <path
+        android:fillColor="#1E1E2E"
+        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0" />
+    <!-- Music note -->
+    <path
+        android:fillColor="#BB86FC"
+        android:pathData="M54,30v22.1c-1.18,-0.68 -2.54,-1.1 -4,-1.1c-4.42,0 -8,3.58 -8,8s3.58,8 8,8s8,-3.58 8,-4V38h8V30H54z" />
+    <!-- Text lines representing lyrics -->
+    <path
+        android:fillColor="#8888AA"
+        android:pathData="M38,40h12v2H38zM38,45h16v2H38zM38,50h10v2H38z" />
+</vector>
