@@ -54,22 +54,20 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
             return buildNoMediaTemplate()
         }
 
-        val header = buildHeader(state.track)
+        val title = buildTitle(state.track)
 
         return when (state.status) {
-            LyricsStatus.LOADING -> buildLoadingTemplate(header)
-            LyricsStatus.NOT_FOUND -> buildNotFoundTemplate(header, state)
-            LyricsStatus.ERROR -> buildErrorTemplate(header)
-            LyricsStatus.FOUND -> buildLyricsTemplate(header, state)
+            LyricsStatus.LOADING -> buildLoadingTemplate(title)
+            LyricsStatus.NOT_FOUND -> buildNotFoundTemplate(title)
+            LyricsStatus.ERROR -> buildErrorTemplate(title)
+            LyricsStatus.FOUND -> buildLyricsTemplate(title, state)
             LyricsStatus.NO_MEDIA -> buildNoMediaTemplate()
         }
     }
 
-    private fun buildHeader(track: TrackInfo): Header {
-        val subtitle = if (track.artist.isNotBlank()) " — ${track.artist}" else ""
-        return Header.Builder()
-            .setTitle("${track.title}$subtitle")
-            .build()
+    private fun buildTitle(track: TrackInfo): String {
+        val artist = if (track.artist.isNotBlank()) " — ${track.artist}" else ""
+        return "${track.title}$artist"
     }
 
     private fun buildNoMediaTemplate(): Template {
@@ -83,37 +81,36 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
                 )
                 .build()
         )
-            .setHeader(
-                Header.Builder().setTitle("Auto Lyrics").build()
-            )
+            .setTitle("Auto Lyrics")
             .build()
     }
 
-    private fun buildLoadingTemplate(header: Header): Template {
+    private fun buildLoadingTemplate(title: String): Template {
         return PaneTemplate.Builder(
             Pane.Builder()
                 .setLoading(true)
                 .build()
         )
-            .setHeader(header)
+            .setTitle(title)
             .build()
     }
 
-    private fun buildNotFoundTemplate(header: Header, state: LyricsState): Template {
-        val paneBuilder = Pane.Builder()
-            .addRow(
-                Row.Builder()
-                    .setTitle("No synced lyrics available")
-                    .addText("Lyrics not found on LRCLIB for this track")
-                    .build()
-            )
-
-        return PaneTemplate.Builder(paneBuilder.build())
-            .setHeader(header)
+    private fun buildNotFoundTemplate(title: String): Template {
+        return PaneTemplate.Builder(
+            Pane.Builder()
+                .addRow(
+                    Row.Builder()
+                        .setTitle("No synced lyrics available")
+                        .addText("Lyrics not found on LRCLIB for this track")
+                        .build()
+                )
+                .build()
+        )
+            .setTitle(title)
             .build()
     }
 
-    private fun buildErrorTemplate(header: Header): Template {
+    private fun buildErrorTemplate(title: String): Template {
         return PaneTemplate.Builder(
             Pane.Builder()
                 .addRow(
@@ -124,25 +121,22 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
                 )
                 .build()
         )
-            .setHeader(header)
+            .setTitle(title)
             .build()
     }
 
-    private fun buildLyricsTemplate(header: Header, state: LyricsState): Template {
+    private fun buildLyricsTemplate(title: String, state: LyricsState): Template {
         val lines = state.lines
         val currentIdx = state.currentIndex
         val paneBuilder = Pane.Builder()
 
         if (lines.isEmpty()) {
-            paneBuilder.addRow(
-                Row.Builder().setTitle("♪").build()
-            )
+            paneBuilder.addRow(Row.Builder().setTitle("♪").build())
             return PaneTemplate.Builder(paneBuilder.build())
-                .setHeader(header)
+                .setTitle(title)
                 .build()
         }
 
-        // PaneTemplate supports max 4 rows — show current line + surrounding context
         val windowStart = maxOf(0, currentIdx - 1)
         val windowEnd = minOf(lines.size, windowStart + 4)
         val adjustedStart = maxOf(0, windowEnd - 4)
@@ -161,13 +155,11 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         }
 
         if (rowCount == 0) {
-            paneBuilder.addRow(
-                Row.Builder().setTitle("♪").build()
-            )
+            paneBuilder.addRow(Row.Builder().setTitle("♪").build())
         }
 
         return PaneTemplate.Builder(paneBuilder.build())
-            .setHeader(header)
+            .setTitle(title)
             .build()
     }
 }
