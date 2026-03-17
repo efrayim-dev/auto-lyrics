@@ -66,7 +66,7 @@ class MainActivity : AppCompatActivity() {
                             tvLyrics.text = "Loading lyrics…"
                         }
                         LyricsStatus.NOT_FOUND -> {
-                            tvLyrics.text = "No synced lyrics found for this track."
+                            tvLyrics.text = "No lyrics found for this track."
                         }
                         LyricsStatus.ERROR -> {
                             tvLyrics.text = "Error loading lyrics.\nCheck your internet connection."
@@ -86,6 +86,16 @@ class MainActivity : AppCompatActivity() {
                                 lastScrolledIndex = state.currentIndex
                                 autoScrollToCurrentLine(state.currentIndex, state.lines.size)
                             }
+                        }
+                        LyricsStatus.PLAIN_ONLY -> {
+                            val sb = StringBuilder()
+                            sb.append("ℹ  Lyrics are not synced to playback\n\n")
+                            sb.append("─────────────────────\n\n")
+                            state.lines.forEach { line ->
+                                sb.append("${line.text}\n\n")
+                            }
+                            tvLyrics.text = sb.toString()
+                            scrollView.scrollTo(0, 0)
                         }
                     }
                 }

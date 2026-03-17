@@ -170,12 +170,13 @@ class MediaTracker private constructor(context: Context) {
                     } else if (result?.plainLyrics != null) {
                         val lines = result.plainLyrics.lines()
                             .filter { it.isNotBlank() }
-                            .mapIndexed { i, text ->
-                                com.autolyrics.model.LyricLine(i.toLong(), text)
+                            .map { text ->
+                                com.autolyrics.model.LyricLine(0L, text)
                             }
                         _state.value = _state.value.copy(
                             lines = lines,
-                            status = LyricsStatus.NOT_FOUND
+                            currentIndex = -1,
+                            status = LyricsStatus.PLAIN_ONLY
                         )
                     } else {
                         _state.value = _state.value.copy(status = LyricsStatus.NOT_FOUND)

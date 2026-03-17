@@ -36,20 +36,34 @@ object LrcLibClient {
         albumName: String,
         durationSec: Int
     ): LrcLibResponse? {
+        // Priority 1: exact match with synced lyrics
         if (durationSec > 0 && albumName.isNotBlank()) {
             val exact = getExact(trackName, artistName, albumName, durationSec)
             if (exact?.syncedLyrics != null) return exact
         }
 
-        val searchResult = search(trackName, artistName)
-        if (searchResult?.syncedLyrics != null) return searchResult
+        // Priority 2: search for synced lyrics
+        val searchResults = searchAll(trackName, artistName)
+        val syncedResult = searchResults.firstOrNull { it.syncedLyrics != null }
+        if (syncedResult != null) return syncedResult
 
+        // Priority 3: exact match without album for synced lyrics
         if (durationSec > 0) {
             val exactNoAlbum = getExact(trackName, artistName, "", durationSec)
             if (exactNoAlbum?.syncedLyrics != null) return exactNoAlbum
         }
 
-        return searchResult
+        // Priority 4: exact match with any lyrics (including plain)
+        if (durationSec > 0 && albumName.isNotBlank()) {
+            val exact = getExact(trackName, artistName, albumName, durationSec)
+            if (exact?.plainLyrics != null) return exact
+        }
+
+        // Priority 5: search result with plain lyrics
+        val plainResult = searchResults.firstOrNull { it.plainLyrics != null }
+        if (plainResult != null) return plainResult
+
+        return null
     }
 
     private fun getExact(
@@ -80,7 +94,7 @@ object LrcLibClient {
         }
     }
 
-    private fun search(trackName: String, artistName: String): LrcLibResponse? {
+    private fun searchAll(trackName: String, artistName: String): List<LrcLibResponse> {
         val urlBuilder = "$BASE_URL/search".toHttpUrl().newBuilder()
             .addQueryParameter("track_name", trackName)
 
@@ -97,12 +111,11 @@ object LrcLibClient {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val type = object : TypeToken<List<LrcLibResponse>>() {}.type
-                    val results: List<LrcLibResponse> = gson.fromJson(response.body?.string(), type)
-                    results.firstOrNull { it.syncedLyrics != null }
-                } else null
+                    gson.fromJson(response.body?.string(), type) ?: emptyList()
+                } else emptyList()
             }
         } catch (_: Exception) {
-            null
+            emptyList()
         }
     }
 }

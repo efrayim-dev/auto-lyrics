@@ -60,7 +60,8 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
             LyricsStatus.LOADING -> buildLoadingTemplate(title)
             LyricsStatus.NOT_FOUND -> buildNotFoundTemplate(title)
             LyricsStatus.ERROR -> buildErrorTemplate(title)
-            LyricsStatus.FOUND -> buildLyricsTemplate(title, state)
+            LyricsStatus.FOUND -> buildSyncedLyricsTemplate(title, state)
+            LyricsStatus.PLAIN_ONLY -> buildPlainLyricsTemplate(title, state)
             LyricsStatus.NO_MEDIA -> buildNoMediaTemplate()
         }
     }
@@ -100,7 +101,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
             Pane.Builder()
                 .addRow(
                     Row.Builder()
-                        .setTitle("No synced lyrics available")
+                        .setTitle("No lyrics available")
                         .addText("Lyrics not found on LRCLIB for this track")
                         .build()
                 )
@@ -125,7 +126,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
             .build()
     }
 
-    private fun buildLyricsTemplate(title: String, state: LyricsState): Template {
+    private fun buildSyncedLyricsTemplate(title: String, state: LyricsState): Template {
         val lines = state.lines
         val currentIdx = state.currentIndex
         val paneBuilder = Pane.Builder()
@@ -160,6 +161,32 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
 
         return PaneTemplate.Builder(paneBuilder.build())
             .setTitle(title)
+            .build()
+    }
+
+    private fun buildPlainLyricsTemplate(title: String, state: LyricsState): Template {
+        val lines = state.lines
+        val listBuilder = ItemList.Builder()
+
+        listBuilder.addItem(
+            Row.Builder()
+                .setTitle("ℹ  Lyrics are not synced to playback")
+                .build()
+        )
+
+        val maxLines = minOf(lines.size, 100)
+        for (i in 0 until maxLines) {
+            val text = lines[i].text.ifBlank { "♪" }
+            listBuilder.addItem(
+                Row.Builder()
+                    .setTitle(text)
+                    .build()
+            )
+        }
+
+        return ListTemplate.Builder()
+            .setTitle(title)
+            .setSingleList(listBuilder.build())
             .build()
     }
 }

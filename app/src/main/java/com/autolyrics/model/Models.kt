@@ -16,6 +16,7 @@ enum class LyricsStatus {
     NO_MEDIA,
     LOADING,
     FOUND,
+    PLAIN_ONLY,
     NOT_FOUND,
     ERROR
 }
