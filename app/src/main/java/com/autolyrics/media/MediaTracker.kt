@@ -2,6 +2,7 @@ package com.autolyrics.media
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.Bitmap
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.PlaybackState
@@ -16,6 +17,7 @@ import com.autolyrics.model.LyricLine
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import com.autolyrics.model.TrackInfo
+import com.autolyrics.util.AlbumColorExtractor
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,7 +38,9 @@ class MediaTracker private constructor(context: Context) {
     private var lastPositionUpdateTime: Long = 0
     private var playbackSpeed: Float = 1.0f
     private var fetchJob: Job? = null
+    private var artJob: Job? = null
     private var pendingTrack: TrackInfo? = null
+    private var pendingArt: Bitmap? = null
     private var lyricsOffsetMs: Long = 0L
 
     init {
@@ -55,6 +59,7 @@ class MediaTracker private constructor(context: Context) {
 
     private val trackChangeRunnable = Runnable {
         val track = pendingTrack ?: return@Runnable
+        val art = pendingArt
         val current = _state.value.track
         if (track.title == current?.title && track.artist == current.artist) return@Runnable
 
@@ -64,9 +69,12 @@ class MediaTracker private constructor(context: Context) {
             currentIndex = -1,
             currentWordIndex = -1,
             status = LyricsStatus.LOADING,
-            source = ""
+            source = "",
+            albumArt = art,
+            albumColors = null
         )
         fetchLyrics(track)
+        extractAlbumColors(art)
     }
 
     private val mediaCallback = object : MediaController.Callback() {
@@ -152,6 +160,7 @@ class MediaTracker private constructor(context: Context) {
         if (controller == null) {
             handler.removeCallbacks(positionChecker)
             handler.removeCallbacks(trackChangeRunnable)
+            artJob?.cancel()
             _state.value = LyricsState(offsetMs = lyricsOffsetMs)
             return
         }
@@ -177,16 +186,35 @@ class MediaTracker private constructor(context: Context) {
         val artist = MetadataCleaner.cleanArtist(rawArtist)
         val album = MetadataCleaner.cleanAlbum(rawAlbum)
 
+        val art = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            ?: metadata.getBitmap(MediaMetadata.METADATA_KEY_ART)
+
         val newTrack = TrackInfo(title, artist, album, duration)
         val current = _state.value.track
 
         if (current != null && newTrack.title == current.title && newTrack.artist == current.artist) {
+            if (art != null && _state.value.albumArt == null) {
+                _state.value = _state.value.copy(albumArt = art)
+                extractAlbumColors(art)
+            }
             return
         }
 
         pendingTrack = newTrack
+        pendingArt = art
         handler.removeCallbacks(trackChangeRunnable)
         handler.postDelayed(trackChangeRunnable, 600)
+    }
+
+    private fun extractAlbumColors(bitmap: Bitmap?) {
+        artJob?.cancel()
+        if (bitmap == null) return
+        artJob = scope.launch(Dispatchers.Default) {
+            val colors = AlbumColorExtractor.extract(bitmap)
+            withContext(Dispatchers.Main) {
+                _state.value = _state.value.copy(albumColors = colors)
+            }
+        }
     }
 
     private fun handlePlaybackStateChanged(pbState: PlaybackState?) {

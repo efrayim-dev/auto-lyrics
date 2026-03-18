@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root_layout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -7,6 +8,7 @@
 
     <!-- App Bar -->
     <LinearLayout
+        android:id="@+id/layout_app_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -15,6 +17,7 @@
         android:padding="20dp">
 
         <TextView
+            android:id="@+id/tv_app_title"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Auto Lyrics"
@@ -24,6 +27,7 @@
             android:fontFamily="sans-serif-medium" />
 
         <TextView
+            android:id="@+id/tv_app_subtitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Synced lyrics on Android Auto"
@@ -55,31 +59,50 @@
         android:textAllCaps="false"
         android:visibility="gone" />
 
-    <!-- Track Info + Source -->
-    <FrameLayout
+    <!-- Track Info + Album Art + Source -->
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp">
 
-        <TextView
-            android:id="@+id/tv_track"
-            android:layout_width="match_parent"
+        <ImageView
+            android:id="@+id/iv_album_art"
+            android:layout_width="52dp"
+            android:layout_height="52dp"
+            android:scaleType="centerCrop"
+            android:visibility="gone"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/bg_album_art" />
+
+        <LinearLayout
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:padding="16dp"
-            android:paddingEnd="80dp"
-            android:textColor="#BB86FC"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:gravity="center"
-            android:lineSpacingExtra="4dp"
-            android:visibility="gone" />
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tv_track"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#BB86FC"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:lineSpacingExtra="3dp"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/tv_source"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="end|top"
-            android:layout_marginTop="8dp"
-            android:layout_marginEnd="12dp"
+            android:layout_marginStart="8dp"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
             android:paddingTop="3dp"
@@ -89,9 +112,10 @@
             android:fontFamily="sans-serif-medium"
             android:background="@drawable/bg_source_pill"
             android:visibility="gone" />
-    </FrameLayout>
+    </LinearLayout>
 
     <View
+        android:id="@+id/divider"
         android:layout_width="match_parent"
         android:layout_height="1dp"
         android:background="#2A2A3A"

@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.provider.Settings
 import android.text.SpannableStringBuilder
@@ -13,6 +14,8 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.View
 import android.widget.Button
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -21,6 +24,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.autolyrics.media.MediaListenerService
 import com.autolyrics.media.MediaTracker
+import com.autolyrics.model.AlbumColors
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import kotlinx.coroutines.launch
@@ -28,14 +32,22 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var mediaTracker: MediaTracker
+    private lateinit var rootLayout: LinearLayout
+    private lateinit var appBar: LinearLayout
+    private lateinit var tvAppTitle: TextView
+    private lateinit var tvAppSubtitle: TextView
     private lateinit var tvStatus: TextView
     private lateinit var btnPermission: Button
+    private lateinit var ivAlbumArt: ImageView
     private lateinit var tvTrack: TextView
     private lateinit var tvSource: TextView
     private lateinit var tvLyrics: TextView
     private lateinit var scrollView: ScrollView
+    private lateinit var delayBar: LinearLayout
     private lateinit var tvDelay: TextView
+    private lateinit var divider: View
     private var lastScrolledIndex = -1
+    private var currentColors: AlbumColors? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,13 +55,22 @@ class MainActivity : AppCompatActivity() {
 
         mediaTracker = MediaTracker.getInstance(this)
 
+        rootLayout = findViewById(R.id.root_layout)
+        appBar = findViewById(R.id.layout_app_bar)
+        tvAppTitle = findViewById(R.id.tv_app_title)
+        tvAppSubtitle = findViewById(R.id.tv_app_subtitle)
         tvStatus = findViewById(R.id.tv_status)
         btnPermission = findViewById(R.id.btn_permission)
+        ivAlbumArt = findViewById(R.id.iv_album_art)
         tvTrack = findViewById(R.id.tv_track)
         tvSource = findViewById(R.id.tv_source)
         tvLyrics = findViewById(R.id.tv_lyrics)
         scrollView = findViewById(R.id.scroll_lyrics)
+        delayBar = findViewById(R.id.layout_delay)
         tvDelay = findViewById(R.id.tv_delay)
+        divider = findViewById(R.id.divider)
+
+        ivAlbumArt.clipToOutline = true
 
         btnPermission.setOnClickListener {
             startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
@@ -70,6 +91,8 @@ class MainActivity : AppCompatActivity() {
                 mediaTracker.state.collect { state ->
                     updatePermissionUi()
                     updateDelayDisplay(state.offsetMs)
+                    updateAlbumArt(state)
+                    applyThemeColors(state.albumColors)
 
                     if (state.track != null) {
                         val artistText = if (state.track.artist.isNotBlank())
@@ -120,6 +143,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun updateAlbumArt(state: LyricsState) {
+        val art = state.albumArt
+        if (art != null) {
+            ivAlbumArt.setImageBitmap(art)
+            ivAlbumArt.visibility = View.VISIBLE
+        } else {
+            ivAlbumArt.setImageDrawable(null)
+            ivAlbumArt.visibility = View.GONE
+        }
+    }
+
+    private fun applyThemeColors(colors: AlbumColors?) {
+        if (colors == currentColors) return
+        currentColors = colors
+
+        if (colors != null) {
+            val gradient = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(colors.dominant, colors.dominantDark)
+            )
+            rootLayout.background = gradient
+
+            appBar.setBackgroundColor(lighten(colors.dominant, 1.3f))
+            delayBar.setBackgroundColor(lighten(colors.dominantDark, 1.2f))
+            divider.setBackgroundColor(lighten(colors.dominant, 1.8f))
+
+            tvAppTitle.setTextColor(colors.textPrimary)
+            tvAppSubtitle.setTextColor(colors.textDim)
+            tvTrack.setTextColor(colors.vibrant)
+            tvLyrics.setTextColor(colors.textPrimary)
+        } else {
+            rootLayout.setBackgroundColor(DEFAULT_BG)
+            appBar.setBackgroundColor(DEFAULT_APP_BAR)
+            delayBar.setBackgroundColor(DEFAULT_DELAY_BAR)
+            divider.setBackgroundColor(DEFAULT_DIVIDER)
+
+            tvAppTitle.setTextColor(Color.parseColor("#E0E0FF"))
+            tvAppSubtitle.setTextColor(Color.parseColor("#8888AA"))
+            tvTrack.setTextColor(Color.parseColor("#BB86FC"))
+            tvLyrics.setTextColor(Color.parseColor("#CCCCDD"))
+        }
+    }
+
+    private fun lighten(color: Int, factor: Float): Int {
+        val r = (Color.red(color) * factor).toInt().coerceIn(0, 255)
+        val g = (Color.green(color) * factor).toInt().coerceIn(0, 255)
+        val b = (Color.blue(color) * factor).toInt().coerceIn(0, 255)
+        return Color.rgb(r, g, b)
+    }
+
     private fun updateDelayDisplay(offsetMs: Long) {
         val sign = when {
             offsetMs > 0 -> "+"
@@ -131,6 +204,10 @@ class MainActivity : AppCompatActivity() {
     private fun renderSyncedLyrics(state: LyricsState) {
         val ssb = SpannableStringBuilder()
         val hasKaraoke = state.lines.any { it.words.isNotEmpty() }
+        val colors = state.albumColors
+        val highlightColor = colors?.vibrant ?: DEFAULT_HIGHLIGHT
+        val highlightBg = setAlpha(highlightColor, 0.2f)
+        val dimColor = colors?.textDim ?: DEFAULT_DIM
 
         state.lines.forEachIndexed { i, line ->
             val isCurrentLine = i == state.currentIndex
@@ -143,7 +220,6 @@ class MainActivity : AppCompatActivity() {
             }
 
             if (isCurrentLine && hasKaraoke && line.words.isNotEmpty()) {
-                val wordsStart = ssb.length
                 line.words.forEachIndexed { wi, word ->
                     val wordStart = ssb.length
                     ssb.append(word.text)
@@ -156,12 +232,12 @@ class MainActivity : AppCompatActivity() {
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
                         ssb.setSpan(
-                            ForegroundColorSpan(HIGHLIGHT_COLOR),
+                            ForegroundColorSpan(highlightColor),
                             wordStart, wordEnd,
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
                         ssb.setSpan(
-                            BackgroundColorSpan(HIGHLIGHT_BG_COLOR),
+                            BackgroundColorSpan(highlightBg),
                             wordStart, wordEnd,
                             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                         )
@@ -169,10 +245,9 @@ class MainActivity : AppCompatActivity() {
 
                     if (wi < line.words.size - 1) ssb.append(" ")
                 }
-                val wordsEnd = ssb.length
                 ssb.setSpan(
                     StyleSpan(Typeface.BOLD),
-                    lineStart, wordsEnd,
+                    lineStart, ssb.length,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             } else {
@@ -188,7 +263,7 @@ class MainActivity : AppCompatActivity() {
 
             if (!isCurrentLine) {
                 ssb.setSpan(
-                    ForegroundColorSpan(DIM_COLOR),
+                    ForegroundColorSpan(dimColor),
                     lineStart, ssb.length,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
@@ -242,8 +317,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private val HIGHLIGHT_COLOR = Color.parseColor("#FFD54F")
-        private val HIGHLIGHT_BG_COLOR = Color.parseColor("#33FFD54F")
-        private val DIM_COLOR = Color.parseColor("#99FFFFFF")
+        private val DEFAULT_BG = Color.parseColor("#121212")
+        private val DEFAULT_APP_BAR = Color.parseColor("#1E1E2E")
+        private val DEFAULT_DELAY_BAR = Color.parseColor("#1A1A2A")
+        private val DEFAULT_DIVIDER = Color.parseColor("#2A2A3A")
+        private val DEFAULT_HIGHLIGHT = Color.parseColor("#FFD54F")
+        private val DEFAULT_DIM = Color.parseColor("#99FFFFFF")
+
+        private fun setAlpha(color: Int, alpha: Float): Int {
+            val a = (alpha * 255).toInt().coerceIn(0, 255)
+            return Color.argb(a, Color.red(color), Color.green(color), Color.blue(color))
+        }
     }
 }

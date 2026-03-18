@@ -11,8 +11,8 @@ android {
         applicationId = "com.autolyrics"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.5.0"
+        versionCode = 8
+        versionName = "1.6.0"
     }
 
     signingConfigs {
@@ -61,6 +61,9 @@ dependencies {
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Color extraction from album art
+    implementation("androidx.palette:palette-ktx:1.0.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

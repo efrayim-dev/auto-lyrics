@@ -1,5 +1,7 @@
 package com.autolyrics.model
 
+import android.graphics.Bitmap
+
 data class TrackInfo(
     val title: String,
     val artist: String,
@@ -16,6 +18,14 @@ data class LyricLine(
     val timeMs: Long,
     val text: String,
     val words: List<LyricWord> = emptyList()
+)
+
+data class AlbumColors(
+    val dominant: Int,
+    val dominantDark: Int,
+    val vibrant: Int,
+    val textPrimary: Int,
+    val textDim: Int
 )
 
 enum class LyricsStatus {
@@ -35,5 +45,7 @@ data class LyricsState(
     val isPlaying: Boolean = false,
     val status: LyricsStatus = LyricsStatus.NO_MEDIA,
     val source: String = "",
-    val offsetMs: Long = 0
+    val offsetMs: Long = 0,
+    val albumArt: Bitmap? = null,
+    val albumColors: AlbumColors? = null
 )

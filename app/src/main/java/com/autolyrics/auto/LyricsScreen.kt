@@ -1,13 +1,16 @@
 package com.autolyrics.auto
 
+import android.graphics.Bitmap
 import android.text.SpannableString
 import android.text.Spanned
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.*
+import androidx.core.graphics.drawable.IconCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import com.autolyrics.media.MediaTracker
+import com.autolyrics.model.AlbumColors
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import com.autolyrics.model.TrackInfo
@@ -23,6 +26,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
     private var displayedWordIndex = Int.MIN_VALUE
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrack: TrackInfo? = null
+    private var displayedArt: Bitmap? = null
     private var lastWordRefreshTime = 0L
 
     init {
@@ -34,18 +38,20 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
                         val statusChanged = newState.status != displayedStatus
                         val trackChanged = newState.track?.title != displayedTrack?.title
                         val wordChanged = newState.currentWordIndex != displayedWordIndex
+                        val artChanged = newState.albumArt !== displayedArt
 
                         val now = System.currentTimeMillis()
                         val wordThrottleOk = now - lastWordRefreshTime >= 400
 
                         val shouldRefresh = lineChanged || statusChanged || trackChanged ||
-                            (wordChanged && wordThrottleOk)
+                            artChanged || (wordChanged && wordThrottleOk)
 
                         if (shouldRefresh) {
                             displayedIndex = newState.currentIndex
                             displayedWordIndex = newState.currentWordIndex
                             displayedStatus = newState.status
                             displayedTrack = newState.track
+                            displayedArt = newState.albumArt
                             if (wordChanged) lastWordRefreshTime = now
                             invalidate()
                         }
@@ -84,6 +90,24 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         return "${track.title}$artist$srcTag"
     }
 
+    private fun buildCarIcon(bitmap: Bitmap?): CarIcon? {
+        if (bitmap == null) return null
+        return try {
+            CarIcon.Builder(IconCompat.createWithBitmap(bitmap)).build()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun getHighlightCarColor(colors: AlbumColors?): CarColor {
+        if (colors == null) return CarColor.YELLOW
+        return try {
+            CarColor.createCustom(colors.vibrant, colors.vibrant)
+        } catch (_: Exception) {
+            CarColor.YELLOW
+        }
+    }
+
     private fun buildNoMediaTemplate(): Template {
         return PaneTemplate.Builder(
             Pane.Builder()
@@ -100,41 +124,46 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
     }
 
     private fun buildLoadingTemplate(title: String): Template {
-        return PaneTemplate.Builder(
-            Pane.Builder()
-                .setLoading(true)
-                .build()
-        )
+        val paneBuilder = Pane.Builder().setLoading(true)
+        val state = mediaTracker.state.value
+        val icon = buildCarIcon(state.albumArt)
+        if (icon != null) paneBuilder.setImage(icon)
+
+        return PaneTemplate.Builder(paneBuilder.build())
             .setTitle(title)
             .build()
     }
 
     private fun buildNotFoundTemplate(title: String): Template {
-        return PaneTemplate.Builder(
-            Pane.Builder()
-                .addRow(
-                    Row.Builder()
-                        .setTitle("No lyrics available")
-                        .addText("Lyrics not found for this track")
-                        .build()
-                )
-                .build()
-        )
+        val paneBuilder = Pane.Builder()
+            .addRow(
+                Row.Builder()
+                    .setTitle("No lyrics available")
+                    .addText("Lyrics not found for this track")
+                    .build()
+            )
+        val state = mediaTracker.state.value
+        val icon = buildCarIcon(state.albumArt)
+        if (icon != null) paneBuilder.setImage(icon)
+
+        return PaneTemplate.Builder(paneBuilder.build())
             .setTitle(title)
             .build()
     }
 
     private fun buildErrorTemplate(title: String): Template {
-        return PaneTemplate.Builder(
-            Pane.Builder()
-                .addRow(
-                    Row.Builder()
-                        .setTitle("Could not load lyrics")
-                        .addText("Check your internet connection")
-                        .build()
-                )
-                .build()
-        )
+        val paneBuilder = Pane.Builder()
+            .addRow(
+                Row.Builder()
+                    .setTitle("Could not load lyrics")
+                    .addText("Check your internet connection")
+                    .build()
+            )
+        val state = mediaTracker.state.value
+        val icon = buildCarIcon(state.albumArt)
+        if (icon != null) paneBuilder.setImage(icon)
+
+        return PaneTemplate.Builder(paneBuilder.build())
             .setTitle(title)
             .build()
     }
@@ -143,6 +172,9 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         val lines = state.lines
         val currentIdx = state.currentIndex
         val paneBuilder = Pane.Builder()
+
+        val icon = buildCarIcon(state.albumArt)
+        if (icon != null) paneBuilder.setImage(icon)
 
         if (lines.isEmpty()) {
             paneBuilder.addRow(Row.Builder().setTitle("♪").build())
@@ -154,6 +186,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         val windowStart = maxOf(0, currentIdx - 1)
         val windowEnd = minOf(lines.size, windowStart + 4)
         val adjustedStart = maxOf(0, windowEnd - 4)
+        val highlightColor = getHighlightCarColor(state.albumColors)
 
         var rowCount = 0
         for (i in adjustedStart until windowEnd) {
@@ -162,7 +195,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
             val isCurrentLine = i == currentIdx
 
             val rowTitle: CharSequence = if (isCurrentLine && line.words.isNotEmpty()) {
-                buildKaraokeRowTitle(line.text, line.words, state.currentWordIndex, true)
+                buildKaraokeRowTitle(line.text, line.words, state.currentWordIndex, true, highlightColor)
             } else if (isCurrentLine) {
                 "▶  ${line.text}"
             } else {
@@ -190,7 +223,8 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         fullText: String,
         words: List<com.autolyrics.model.LyricWord>,
         currentWordIndex: Int,
-        isCurrent: Boolean
+        isCurrent: Boolean,
+        highlightColor: CarColor
     ): CharSequence {
         val prefix = if (isCurrent) "▶  " else "     "
         val display = "$prefix${fullText}"
@@ -202,10 +236,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         val targetWord = words[currentWordIndex].text
         val prefixLen = prefix.length
 
-        var searchFrom = 0
-        var wordOccurrence = 0
         var highlightStart = -1
-
         var charPos = 0
         for (wi in 0 until words.size) {
             val wordText = words[wi].text
@@ -226,7 +257,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
 
         val spannable = SpannableString(display)
         spannable.setSpan(
-            ForegroundCarColorSpan.create(CarColor.YELLOW),
+            ForegroundCarColorSpan.create(highlightColor),
             highlightStart, highlightEnd,
             Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         )
