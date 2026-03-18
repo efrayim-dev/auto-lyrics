@@ -1,6 +1,7 @@
 package com.autolyrics.media
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.PlaybackState
@@ -24,6 +25,8 @@ class MediaTracker private constructor(context: Context) {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val handler = Handler(Looper.getMainLooper())
+    private val prefs: SharedPreferences =
+        context.getSharedPreferences("auto_lyrics_prefs", Context.MODE_PRIVATE)
 
     private val _state = MutableStateFlow(LyricsState())
     val state: StateFlow<LyricsState> = _state.asStateFlow()
@@ -34,6 +37,12 @@ class MediaTracker private constructor(context: Context) {
     private var playbackSpeed: Float = 1.0f
     private var fetchJob: Job? = null
     private var pendingTrack: TrackInfo? = null
+    private var lyricsOffsetMs: Long = 0L
+
+    init {
+        lyricsOffsetMs = prefs.getLong("lyrics_offset_ms", 0L)
+        _state.value = _state.value.copy(offsetMs = lyricsOffsetMs)
+    }
 
     private val positionChecker = object : Runnable {
         override fun run() {
@@ -54,7 +63,8 @@ class MediaTracker private constructor(context: Context) {
             lines = emptyList(),
             currentIndex = -1,
             currentWordIndex = -1,
-            status = LyricsStatus.LOADING
+            status = LyricsStatus.LOADING,
+            source = ""
         )
         fetchLyrics(track)
     }
@@ -73,10 +83,28 @@ class MediaTracker private constructor(context: Context) {
         }
     }
 
+    fun adjustOffset(deltaMs: Long) {
+        lyricsOffsetMs += deltaMs
+        prefs.edit().putLong("lyrics_offset_ms", lyricsOffsetMs).apply()
+        _state.value = _state.value.copy(offsetMs = lyricsOffsetMs)
+        updateCurrentPosition()
+    }
+
+    fun resetOffset() {
+        lyricsOffsetMs = 0L
+        prefs.edit().putLong("lyrics_offset_ms", 0L).apply()
+        _state.value = _state.value.copy(offsetMs = lyricsOffsetMs)
+        updateCurrentPosition()
+    }
+
     fun getCurrentPositionMs(): Long {
-        if (!_state.value.isPlaying) return lastPositionMs
-        val elapsed = SystemClock.elapsedRealtime() - lastPositionUpdateTime
-        return lastPositionMs + (elapsed * playbackSpeed).toLong()
+        val basePos = if (!_state.value.isPlaying) {
+            lastPositionMs
+        } else {
+            val elapsed = SystemClock.elapsedRealtime() - lastPositionUpdateTime
+            lastPositionMs + (elapsed * playbackSpeed).toLong()
+        }
+        return basePos + lyricsOffsetMs
     }
 
     private fun updateCurrentPosition() {
@@ -124,7 +152,7 @@ class MediaTracker private constructor(context: Context) {
         if (controller == null) {
             handler.removeCallbacks(positionChecker)
             handler.removeCallbacks(trackChangeRunnable)
-            _state.value = LyricsState()
+            _state.value = LyricsState(offsetMs = lyricsOffsetMs)
             return
         }
 
@@ -194,13 +222,17 @@ class MediaTracker private constructor(context: Context) {
                             lines = result.lines,
                             currentIndex = -1,
                             currentWordIndex = -1,
-                            status = result.status
+                            status = result.status,
+                            source = result.source
                         )
                         if (result.status == LyricsStatus.FOUND) {
                             updateCurrentPosition()
                         }
                     } else {
-                        _state.value = _state.value.copy(status = LyricsStatus.NOT_FOUND)
+                        _state.value = _state.value.copy(
+                            status = LyricsStatus.NOT_FOUND,
+                            source = ""
+                        )
                     }
                 }
             } catch (e: CancellationException) {
@@ -208,7 +240,10 @@ class MediaTracker private constructor(context: Context) {
             } catch (_: Exception) {
                 withContext(Dispatchers.Main) {
                     if (_state.value.track == track) {
-                        _state.value = _state.value.copy(status = LyricsStatus.ERROR)
+                        _state.value = _state.value.copy(
+                            status = LyricsStatus.ERROR,
+                            source = ""
+                        )
                     }
                 }
             }
@@ -217,7 +252,8 @@ class MediaTracker private constructor(context: Context) {
 
     private data class FetchResult(
         val lines: List<LyricLine>,
-        val status: LyricsStatus
+        val status: LyricsStatus,
+        val source: String
     )
 
     private fun fetchFromSyncLrc(track: TrackInfo): FetchResult? {
@@ -231,18 +267,21 @@ class MediaTracker private constructor(context: Context) {
             SyncLrcClient.LyricsType.KARAOKE -> {
                 val lines = LrcParser.parseKaraoke(result.lyrics)
                 val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
-                if (hasRealText) FetchResult(lines, LyricsStatus.FOUND) else null
+                if (hasRealText) FetchResult(lines, LyricsStatus.FOUND, "SyncLRC · Karaoke")
+                else null
             }
             SyncLrcClient.LyricsType.SYNCED -> {
                 val lines = LrcParser.parse(result.lyrics)
                 val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
-                if (hasRealText) FetchResult(lines, LyricsStatus.FOUND) else null
+                if (hasRealText) FetchResult(lines, LyricsStatus.FOUND, "SyncLRC · Synced")
+                else null
             }
             SyncLrcClient.LyricsType.PLAIN -> {
                 val lines = result.lyrics.lines()
                     .filter { it.isNotBlank() }
                     .map { text -> LyricLine(0L, text) }
-                if (lines.isNotEmpty()) FetchResult(lines, LyricsStatus.PLAIN_ONLY) else null
+                if (lines.isNotEmpty()) FetchResult(lines, LyricsStatus.PLAIN_ONLY, "SyncLRC · Plain")
+                else null
             }
         }
     }
@@ -264,14 +303,14 @@ class MediaTracker private constructor(context: Context) {
         if (result.syncedLyrics != null) {
             val lines = LrcParser.parse(result.syncedLyrics)
             val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
-            if (hasRealText) return FetchResult(lines, LyricsStatus.FOUND)
+            if (hasRealText) return FetchResult(lines, LyricsStatus.FOUND, "LRCLIB · Synced")
         }
 
         if (result.plainLyrics != null) {
             val lines = result.plainLyrics.lines()
                 .filter { it.isNotBlank() }
                 .map { text -> LyricLine(0L, text) }
-            if (lines.isNotEmpty()) return FetchResult(lines, LyricsStatus.PLAIN_ONLY)
+            if (lines.isNotEmpty()) return FetchResult(lines, LyricsStatus.PLAIN_ONLY, "LRCLIB · Plain")
         }
 
         return null

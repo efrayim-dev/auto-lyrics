@@ -66,7 +66,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
             return buildNoMediaTemplate()
         }
 
-        val title = buildTitle(state.track)
+        val title = buildTitle(state.track, state.source)
 
         return when (state.status) {
             LyricsStatus.LOADING -> buildLoadingTemplate(title)
@@ -78,9 +78,10 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         }
     }
 
-    private fun buildTitle(track: TrackInfo): String {
+    private fun buildTitle(track: TrackInfo, source: String = ""): String {
         val artist = if (track.artist.isNotBlank()) " — ${track.artist}" else ""
-        return "${track.title}$artist"
+        val srcTag = if (source.isNotBlank()) " [$source]" else ""
+        return "${track.title}$artist$srcTag"
     }
 
     private fun buildNoMediaTemplate(): Template {

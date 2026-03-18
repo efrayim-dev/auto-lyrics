@@ -31,8 +31,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvStatus: TextView
     private lateinit var btnPermission: Button
     private lateinit var tvTrack: TextView
+    private lateinit var tvSource: TextView
     private lateinit var tvLyrics: TextView
     private lateinit var scrollView: ScrollView
+    private lateinit var tvDelay: TextView
     private var lastScrolledIndex = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,17 +46,30 @@ class MainActivity : AppCompatActivity() {
         tvStatus = findViewById(R.id.tv_status)
         btnPermission = findViewById(R.id.btn_permission)
         tvTrack = findViewById(R.id.tv_track)
+        tvSource = findViewById(R.id.tv_source)
         tvLyrics = findViewById(R.id.tv_lyrics)
         scrollView = findViewById(R.id.scroll_lyrics)
+        tvDelay = findViewById(R.id.tv_delay)
 
         btnPermission.setOnClickListener {
             startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        }
+
+        findViewById<Button>(R.id.btn_delay_minus).setOnClickListener {
+            mediaTracker.adjustOffset(-100)
+        }
+        findViewById<Button>(R.id.btn_delay_plus).setOnClickListener {
+            mediaTracker.adjustOffset(100)
+        }
+        findViewById<Button>(R.id.btn_delay_reset).setOnClickListener {
+            mediaTracker.resetOffset()
         }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 mediaTracker.state.collect { state ->
                     updatePermissionUi()
+                    updateDelayDisplay(state.offsetMs)
 
                     if (state.track != null) {
                         val artistText = if (state.track.artist.isNotBlank())
@@ -64,6 +79,13 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         tvTrack.text = ""
                         tvTrack.visibility = View.GONE
+                    }
+
+                    if (state.source.isNotBlank()) {
+                        tvSource.text = state.source
+                        tvSource.visibility = View.VISIBLE
+                    } else {
+                        tvSource.visibility = View.GONE
                     }
 
                     when (state.status) {
@@ -96,6 +118,14 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun updateDelayDisplay(offsetMs: Long) {
+        val sign = when {
+            offsetMs > 0 -> "+"
+            else -> ""
+        }
+        tvDelay.text = "Sync: ${sign}${offsetMs}ms"
     }
 
     private fun renderSyncedLyrics(state: LyricsState) {

@@ -33,5 +33,7 @@ data class LyricsState(
     val currentIndex: Int = -1,
     val currentWordIndex: Int = -1,
     val isPlaying: Boolean = false,
-    val status: LyricsStatus = LyricsStatus.NO_MEDIA
+    val status: LyricsStatus = LyricsStatus.NO_MEDIA,
+    val source: String = "",
+    val offsetMs: Long = 0
 )
