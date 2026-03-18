@@ -10,6 +10,7 @@ import android.os.SystemClock
 import com.autolyrics.lyrics.LrcLibClient
 import com.autolyrics.lyrics.LrcParser
 import com.autolyrics.lyrics.MetadataCleaner
+import com.autolyrics.lyrics.SyncLrcClient
 import com.autolyrics.model.LyricLine
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
@@ -36,7 +37,7 @@ class MediaTracker private constructor(context: Context) {
 
     private val positionChecker = object : Runnable {
         override fun run() {
-            updateCurrentLyricLine()
+            updateCurrentPosition()
             if (_state.value.isPlaying) {
                 handler.postDelayed(this, 150)
             }
@@ -52,6 +53,7 @@ class MediaTracker private constructor(context: Context) {
             track = track,
             lines = emptyList(),
             currentIndex = -1,
+            currentWordIndex = -1,
             status = LyricsStatus.LOADING
         )
         fetchLyrics(track)
@@ -77,22 +79,41 @@ class MediaTracker private constructor(context: Context) {
         return lastPositionMs + (elapsed * playbackSpeed).toLong()
     }
 
-    private fun updateCurrentLyricLine() {
-        val lines = _state.value.lines
-        if (lines.isEmpty() || _state.value.status != LyricsStatus.FOUND) return
+    private fun updateCurrentPosition() {
+        val currentState = _state.value
+        val lines = currentState.lines
+        if (lines.isEmpty() || currentState.status != LyricsStatus.FOUND) return
 
         val posMs = getCurrentPositionMs()
-        var newIndex = -1
+
+        var newLineIndex = -1
         for (i in lines.indices) {
             if (lines[i].timeMs <= posMs) {
-                newIndex = i
+                newLineIndex = i
             } else {
                 break
             }
         }
 
-        if (newIndex != _state.value.currentIndex) {
-            _state.value = _state.value.copy(currentIndex = newIndex)
+        var newWordIndex = -1
+        if (newLineIndex >= 0) {
+            val words = lines[newLineIndex].words
+            if (words.isNotEmpty()) {
+                for (i in words.indices) {
+                    if (words[i].timeMs <= posMs) {
+                        newWordIndex = i
+                    } else {
+                        break
+                    }
+                }
+            }
+        }
+
+        if (newLineIndex != currentState.currentIndex || newWordIndex != currentState.currentWordIndex) {
+            _state.value = currentState.copy(
+                currentIndex = newLineIndex,
+                currentWordIndex = newWordIndex
+            )
         }
     }
 
@@ -135,8 +156,6 @@ class MediaTracker private constructor(context: Context) {
             return
         }
 
-        // Debounce: some players flash lyrics or quality info in metadata fields.
-        // Wait 600ms for the metadata to stabilize before treating as a new track.
         pendingTrack = newTrack
         handler.removeCallbacks(trackChangeRunnable)
         handler.postDelayed(trackChangeRunnable, 600)
@@ -165,49 +184,24 @@ class MediaTracker private constructor(context: Context) {
         fetchJob?.cancel()
         fetchJob = scope.launch(Dispatchers.IO) {
             try {
-                val durationSec = if (track.durationMs > 0) {
-                    (track.durationMs / 1000).toInt()
-                } else 0
-
-                val result = LrcLibClient.getLyrics(
-                    trackName = track.title,
-                    artistName = track.artist,
-                    albumName = track.album,
-                    durationSec = durationSec
-                )
+                val result = fetchFromSyncLrc(track) ?: fetchFromLrcLib(track)
 
                 withContext(Dispatchers.Main) {
                     if (_state.value.track != track) return@withContext
 
-                    if (result?.syncedLyrics != null) {
-                        val lines = LrcParser.parse(result.syncedLyrics)
-                        val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
-
-                        if (hasRealText) {
-                            _state.value = _state.value.copy(
-                                lines = lines,
-                                status = LyricsStatus.FOUND
-                            )
-                            updateCurrentLyricLine()
-                            return@withContext
+                    if (result != null) {
+                        _state.value = _state.value.copy(
+                            lines = result.lines,
+                            currentIndex = -1,
+                            currentWordIndex = -1,
+                            status = result.status
+                        )
+                        if (result.status == LyricsStatus.FOUND) {
+                            updateCurrentPosition()
                         }
+                    } else {
+                        _state.value = _state.value.copy(status = LyricsStatus.NOT_FOUND)
                     }
-
-                    if (result?.plainLyrics != null) {
-                        val lines = result.plainLyrics.lines()
-                            .filter { it.isNotBlank() }
-                            .map { text -> LyricLine(0L, text) }
-                        if (lines.isNotEmpty()) {
-                            _state.value = _state.value.copy(
-                                lines = lines,
-                                currentIndex = -1,
-                                status = LyricsStatus.PLAIN_ONLY
-                            )
-                            return@withContext
-                        }
-                    }
-
-                    _state.value = _state.value.copy(status = LyricsStatus.NOT_FOUND)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -219,6 +213,68 @@ class MediaTracker private constructor(context: Context) {
                 }
             }
         }
+    }
+
+    private data class FetchResult(
+        val lines: List<LyricLine>,
+        val status: LyricsStatus
+    )
+
+    private fun fetchFromSyncLrc(track: TrackInfo): FetchResult? {
+        val result = try {
+            SyncLrcClient.getLyrics(track.title, track.artist)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        return when (result.type) {
+            SyncLrcClient.LyricsType.KARAOKE -> {
+                val lines = LrcParser.parseKaraoke(result.lyrics)
+                val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
+                if (hasRealText) FetchResult(lines, LyricsStatus.FOUND) else null
+            }
+            SyncLrcClient.LyricsType.SYNCED -> {
+                val lines = LrcParser.parse(result.lyrics)
+                val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
+                if (hasRealText) FetchResult(lines, LyricsStatus.FOUND) else null
+            }
+            SyncLrcClient.LyricsType.PLAIN -> {
+                val lines = result.lyrics.lines()
+                    .filter { it.isNotBlank() }
+                    .map { text -> LyricLine(0L, text) }
+                if (lines.isNotEmpty()) FetchResult(lines, LyricsStatus.PLAIN_ONLY) else null
+            }
+        }
+    }
+
+    private fun fetchFromLrcLib(track: TrackInfo): FetchResult? {
+        val durationSec = if (track.durationMs > 0) (track.durationMs / 1000).toInt() else 0
+
+        val result = try {
+            LrcLibClient.getLyrics(
+                trackName = track.title,
+                artistName = track.artist,
+                albumName = track.album,
+                durationSec = durationSec
+            )
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        if (result.syncedLyrics != null) {
+            val lines = LrcParser.parse(result.syncedLyrics)
+            val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
+            if (hasRealText) return FetchResult(lines, LyricsStatus.FOUND)
+        }
+
+        if (result.plainLyrics != null) {
+            val lines = result.plainLyrics.lines()
+                .filter { it.isNotBlank() }
+                .map { text -> LyricLine(0L, text) }
+            if (lines.isNotEmpty()) return FetchResult(lines, LyricsStatus.PLAIN_ONLY)
+        }
+
+        return null
     }
 
     companion object {

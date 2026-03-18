@@ -1,5 +1,7 @@
 package com.autolyrics.auto
 
+import android.text.SpannableString
+import android.text.Spanned
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.*
@@ -18,23 +20,33 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     private var displayedIndex = Int.MIN_VALUE
+    private var displayedWordIndex = Int.MIN_VALUE
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrack: TrackInfo? = null
+    private var lastWordRefreshTime = 0L
 
     init {
         lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
                 scope.launch {
                     mediaTracker.state.collectLatest { newState ->
-                        val shouldRefresh =
-                            newState.currentIndex != displayedIndex ||
-                            newState.status != displayedStatus ||
-                            newState.track?.title != displayedTrack?.title
+                        val lineChanged = newState.currentIndex != displayedIndex
+                        val statusChanged = newState.status != displayedStatus
+                        val trackChanged = newState.track?.title != displayedTrack?.title
+                        val wordChanged = newState.currentWordIndex != displayedWordIndex
+
+                        val now = System.currentTimeMillis()
+                        val wordThrottleOk = now - lastWordRefreshTime >= 400
+
+                        val shouldRefresh = lineChanged || statusChanged || trackChanged ||
+                            (wordChanged && wordThrottleOk)
 
                         if (shouldRefresh) {
                             displayedIndex = newState.currentIndex
+                            displayedWordIndex = newState.currentWordIndex
                             displayedStatus = newState.status
                             displayedTrack = newState.track
+                            if (wordChanged) lastWordRefreshTime = now
                             invalidate()
                         }
                     }
@@ -102,7 +114,7 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
                 .addRow(
                     Row.Builder()
                         .setTitle("No lyrics available")
-                        .addText("Lyrics not found on LRCLIB for this track")
+                        .addText("Lyrics not found for this track")
                         .build()
                 )
                 .build()
@@ -145,11 +157,20 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         var rowCount = 0
         for (i in adjustedStart until windowEnd) {
             if (rowCount >= 4) break
-            val text = lines[i].text
-            val displayText = if (i == currentIdx) "▶  $text" else "     $text"
+            val line = lines[i]
+            val isCurrentLine = i == currentIdx
+
+            val rowTitle: CharSequence = if (isCurrentLine && line.words.isNotEmpty()) {
+                buildKaraokeRowTitle(line.text, line.words, state.currentWordIndex, true)
+            } else if (isCurrentLine) {
+                "▶  ${line.text}"
+            } else {
+                "     ${line.text}"
+            }
+
             paneBuilder.addRow(
                 Row.Builder()
-                    .setTitle(displayText)
+                    .setTitle(rowTitle)
                     .build()
             )
             rowCount++
@@ -162,6 +183,53 @@ class LyricsScreen(carContext: CarContext) : Screen(carContext) {
         return PaneTemplate.Builder(paneBuilder.build())
             .setTitle(title)
             .build()
+    }
+
+    private fun buildKaraokeRowTitle(
+        fullText: String,
+        words: List<com.autolyrics.model.LyricWord>,
+        currentWordIndex: Int,
+        isCurrent: Boolean
+    ): CharSequence {
+        val prefix = if (isCurrent) "▶  " else "     "
+        val display = "$prefix${fullText}"
+
+        if (currentWordIndex < 0 || currentWordIndex >= words.size) {
+            return display
+        }
+
+        val targetWord = words[currentWordIndex].text
+        val prefixLen = prefix.length
+
+        var searchFrom = 0
+        var wordOccurrence = 0
+        var highlightStart = -1
+
+        var charPos = 0
+        for (wi in 0 until words.size) {
+            val wordText = words[wi].text
+            val idx = fullText.indexOf(wordText, charPos)
+            if (idx < 0) continue
+
+            if (wi == currentWordIndex) {
+                highlightStart = prefixLen + idx
+                break
+            }
+            charPos = idx + wordText.length
+        }
+
+        if (highlightStart < 0) return display
+
+        val highlightEnd = highlightStart + targetWord.length
+        if (highlightEnd > display.length) return display
+
+        val spannable = SpannableString(display)
+        spannable.setSpan(
+            ForegroundCarColorSpan.create(CarColor.YELLOW),
+            highlightStart, highlightEnd,
+            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        return spannable
     }
 
     private fun buildPlainLyricsTemplate(title: String, state: LyricsState): Template {

@@ -2,8 +2,15 @@ package com.autolyrics
 
 import android.content.ComponentName
 import android.content.Intent
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.BackgroundColorSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.view.View
 import android.widget.Button
 import android.widget.ScrollView
@@ -14,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.autolyrics.media.MediaListenerService
 import com.autolyrics.media.MediaTracker
+import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import kotlinx.coroutines.launch
 
@@ -72,20 +80,7 @@ class MainActivity : AppCompatActivity() {
                             tvLyrics.text = "Error loading lyrics.\nCheck your internet connection."
                         }
                         LyricsStatus.FOUND -> {
-                            val sb = StringBuilder()
-                            state.lines.forEachIndexed { i, line ->
-                                if (i == state.currentIndex) {
-                                    sb.append("▶  ${line.text}\n\n")
-                                } else {
-                                    sb.append("    ${line.text}\n\n")
-                                }
-                            }
-                            tvLyrics.text = sb.toString()
-
-                            if (state.currentIndex != lastScrolledIndex && state.currentIndex >= 0) {
-                                lastScrolledIndex = state.currentIndex
-                                autoScrollToCurrentLine(state.currentIndex, state.lines.size)
-                            }
+                            renderSyncedLyrics(state)
                         }
                         LyricsStatus.PLAIN_ONLY -> {
                             val sb = StringBuilder()
@@ -100,6 +95,83 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
+        }
+    }
+
+    private fun renderSyncedLyrics(state: LyricsState) {
+        val ssb = SpannableStringBuilder()
+        val hasKaraoke = state.lines.any { it.words.isNotEmpty() }
+
+        state.lines.forEachIndexed { i, line ->
+            val isCurrentLine = i == state.currentIndex
+            val lineStart = ssb.length
+
+            if (isCurrentLine) {
+                ssb.append("▶  ")
+            } else {
+                ssb.append("    ")
+            }
+
+            if (isCurrentLine && hasKaraoke && line.words.isNotEmpty()) {
+                val wordsStart = ssb.length
+                line.words.forEachIndexed { wi, word ->
+                    val wordStart = ssb.length
+                    ssb.append(word.text)
+                    val wordEnd = ssb.length
+
+                    if (wi == state.currentWordIndex) {
+                        ssb.setSpan(
+                            StyleSpan(Typeface.BOLD),
+                            wordStart, wordEnd,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        ssb.setSpan(
+                            ForegroundColorSpan(HIGHLIGHT_COLOR),
+                            wordStart, wordEnd,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                        ssb.setSpan(
+                            BackgroundColorSpan(HIGHLIGHT_BG_COLOR),
+                            wordStart, wordEnd,
+                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                        )
+                    }
+
+                    if (wi < line.words.size - 1) ssb.append(" ")
+                }
+                val wordsEnd = ssb.length
+                ssb.setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    lineStart, wordsEnd,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            } else {
+                ssb.append(line.text)
+                if (isCurrentLine) {
+                    ssb.setSpan(
+                        StyleSpan(Typeface.BOLD),
+                        lineStart, ssb.length,
+                        Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                    )
+                }
+            }
+
+            if (!isCurrentLine) {
+                ssb.setSpan(
+                    ForegroundColorSpan(DIM_COLOR),
+                    lineStart, ssb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            ssb.append("\n\n")
+        }
+
+        tvLyrics.text = ssb
+
+        if (state.currentIndex != lastScrolledIndex && state.currentIndex >= 0) {
+            lastScrolledIndex = state.currentIndex
+            autoScrollToCurrentLine(state.currentIndex, state.lines.size)
         }
     }
 
@@ -133,10 +205,15 @@ class MainActivity : AppCompatActivity() {
     private fun autoScrollToCurrentLine(currentIndex: Int, totalLines: Int) {
         if (totalLines == 0) return
         scrollView.post {
-            val lineHeight = tvLyrics.lineHeight
             val targetY = (currentIndex.toFloat() / totalLines * tvLyrics.height).toInt()
             val offset = scrollView.height / 3
             scrollView.smoothScrollTo(0, maxOf(0, targetY - offset))
         }
+    }
+
+    companion object {
+        private val HIGHLIGHT_COLOR = Color.parseColor("#FFD54F")
+        private val HIGHLIGHT_BG_COLOR = Color.parseColor("#33FFD54F")
+        private val DIM_COLOR = Color.parseColor("#99FFFFFF")
     }
 }

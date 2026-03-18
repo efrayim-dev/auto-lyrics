@@ -7,9 +7,15 @@ data class TrackInfo(
     val durationMs: Long
 )
 
-data class LyricLine(
+data class LyricWord(
     val timeMs: Long,
     val text: String
+)
+
+data class LyricLine(
+    val timeMs: Long,
+    val text: String,
+    val words: List<LyricWord> = emptyList()
 )
 
 enum class LyricsStatus {
@@ -25,6 +31,7 @@ data class LyricsState(
     val track: TrackInfo? = null,
     val lines: List<LyricLine> = emptyList(),
     val currentIndex: Int = -1,
+    val currentWordIndex: Int = -1,
     val isPlaying: Boolean = false,
     val status: LyricsStatus = LyricsStatus.NO_MEDIA
 )
