@@ -23,6 +23,23 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Restore signing keystore
+        id: cache-keystore
+        uses: actions/cache@v4
+        with:
+          path: app/debug.keystore
+          key: debug-keystore-v1
+
+      - name: Generate signing keystore
+        if: steps.cache-keystore.outputs.cache-hit != 'true'
+        run: |
+          keytool -genkeypair -v \
+            -keystore app/debug.keystore \
+            -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=Auto Lyrics,OU=Dev,O=AutoLyrics,L=Unknown,ST=Unknown,C=US"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
