@@ -9,6 +9,8 @@ import android.os.Looper
 import android.os.SystemClock
 import com.autolyrics.lyrics.LrcLibClient
 import com.autolyrics.lyrics.LrcParser
+import com.autolyrics.lyrics.MetadataCleaner
+import com.autolyrics.model.LyricLine
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import com.autolyrics.model.TrackInfo
@@ -30,6 +32,7 @@ class MediaTracker private constructor(context: Context) {
     private var lastPositionUpdateTime: Long = 0
     private var playbackSpeed: Float = 1.0f
     private var fetchJob: Job? = null
+    private var pendingTrack: TrackInfo? = null
 
     private val positionChecker = object : Runnable {
         override fun run() {
@@ -38,6 +41,20 @@ class MediaTracker private constructor(context: Context) {
                 handler.postDelayed(this, 150)
             }
         }
+    }
+
+    private val trackChangeRunnable = Runnable {
+        val track = pendingTrack ?: return@Runnable
+        val current = _state.value.track
+        if (track.title == current?.title && track.artist == current.artist) return@Runnable
+
+        _state.value = _state.value.copy(
+            track = track,
+            lines = emptyList(),
+            currentIndex = -1,
+            status = LyricsStatus.LOADING
+        )
+        fetchLyrics(track)
     }
 
     private val mediaCallback = object : MediaController.Callback() {
@@ -62,7 +79,7 @@ class MediaTracker private constructor(context: Context) {
 
     private fun updateCurrentLyricLine() {
         val lines = _state.value.lines
-        if (lines.isEmpty()) return
+        if (lines.isEmpty() || _state.value.status != LyricsStatus.FOUND) return
 
         val posMs = getCurrentPositionMs()
         var newIndex = -1
@@ -85,6 +102,7 @@ class MediaTracker private constructor(context: Context) {
 
         if (controller == null) {
             handler.removeCallbacks(positionChecker)
+            handler.removeCallbacks(trackChangeRunnable)
             _state.value = LyricsState()
             return
         }
@@ -97,30 +115,31 @@ class MediaTracker private constructor(context: Context) {
     private fun handleMetadataChanged(metadata: MediaMetadata?) {
         if (metadata == null) return
 
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
+        val rawTitle = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)
             ?: metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
             ?: return
-
-        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
+        val rawArtist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)
             ?: metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
             ?: ""
-
-        val album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: ""
+        val rawAlbum = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM) ?: ""
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION)
 
+        val title = MetadataCleaner.cleanTitle(rawTitle)
+        val artist = MetadataCleaner.cleanArtist(rawArtist)
+        val album = MetadataCleaner.cleanAlbum(rawAlbum)
+
         val newTrack = TrackInfo(title, artist, album, duration)
+        val current = _state.value.track
 
-        if (newTrack.title == _state.value.track?.title &&
-            newTrack.artist == _state.value.track?.artist
-        ) return
+        if (current != null && newTrack.title == current.title && newTrack.artist == current.artist) {
+            return
+        }
 
-        _state.value = _state.value.copy(
-            track = newTrack,
-            lines = emptyList(),
-            currentIndex = -1,
-            status = LyricsStatus.LOADING
-        )
-        fetchLyrics(newTrack)
+        // Debounce: some players flash lyrics or quality info in metadata fields.
+        // Wait 600ms for the metadata to stabilize before treating as a new track.
+        pendingTrack = newTrack
+        handler.removeCallbacks(trackChangeRunnable)
+        handler.postDelayed(trackChangeRunnable, 600)
     }
 
     private fun handlePlaybackStateChanged(pbState: PlaybackState?) {
@@ -162,25 +181,33 @@ class MediaTracker private constructor(context: Context) {
 
                     if (result?.syncedLyrics != null) {
                         val lines = LrcParser.parse(result.syncedLyrics)
-                        _state.value = _state.value.copy(
-                            lines = lines,
-                            status = LyricsStatus.FOUND
-                        )
-                        updateCurrentLyricLine()
-                    } else if (result?.plainLyrics != null) {
+                        val hasRealText = lines.any { it.text != "♪" && it.text.isNotBlank() }
+
+                        if (hasRealText) {
+                            _state.value = _state.value.copy(
+                                lines = lines,
+                                status = LyricsStatus.FOUND
+                            )
+                            updateCurrentLyricLine()
+                            return@withContext
+                        }
+                    }
+
+                    if (result?.plainLyrics != null) {
                         val lines = result.plainLyrics.lines()
                             .filter { it.isNotBlank() }
-                            .map { text ->
-                                com.autolyrics.model.LyricLine(0L, text)
-                            }
-                        _state.value = _state.value.copy(
-                            lines = lines,
-                            currentIndex = -1,
-                            status = LyricsStatus.PLAIN_ONLY
-                        )
-                    } else {
-                        _state.value = _state.value.copy(status = LyricsStatus.NOT_FOUND)
+                            .map { text -> LyricLine(0L, text) }
+                        if (lines.isNotEmpty()) {
+                            _state.value = _state.value.copy(
+                                lines = lines,
+                                currentIndex = -1,
+                                status = LyricsStatus.PLAIN_ONLY
+                            )
+                            return@withContext
+                        }
                     }
+
+                    _state.value = _state.value.copy(status = LyricsStatus.NOT_FOUND)
                 }
             } catch (e: CancellationException) {
                 throw e

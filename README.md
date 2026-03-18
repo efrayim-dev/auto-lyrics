@@ -64,13 +64,18 @@ LyricsScreen      MainActivity
 5. Connect your phone via USB with the Android Auto companion app running
 6. Auto Lyrics will appear in the app launcher on the DHU
 
-### Testing on a real car
+### Using on a real car (sideloaded APK)
 
-1. Install the app on your phone
-2. Grant notification access (step 2 above)
-3. Connect your phone to your car via USB or wireless Android Auto
-4. Open **Auto Lyrics** from the Android Auto launcher
-5. Play music — lyrics appear automatically
+Since this app is installed outside the Play Store, Android Auto requires **developer mode** to show it:
+
+1. Open the **Android Auto** app on your phone
+2. Go to **Settings** → scroll to the bottom → tap **Version** 10 times rapidly
+3. You'll see a toast saying "Developer mode enabled"
+4. Tap the **⋮** (three-dot) menu at the top right → **Developer settings**
+5. Enable **"Unknown sources"** (allows sideloaded apps on Android Auto)
+6. Restart Android Auto or disconnect/reconnect to your car
+7. **Auto Lyrics** should now appear in the Android Auto app launcher
+8. Play music — lyrics appear automatically
 
 ## How It Works
 
@@ -86,6 +91,8 @@ LyricsScreen      MainActivity
 - **Android Auto app categories**: The app registers as an IOT-category Car App. For Google Play distribution, it would need to pass Android Auto app review.
 - **Lyrics availability**: Not all songs have synced lyrics on LRCLIB. The app will show "No synced lyrics available" for missing tracks.
 - **Player compatibility**: Most major music players expose media sessions correctly. Some niche players may not provide full metadata.
+- **Streaming quality tags**: Some music apps (YouTube Music, Tidal, etc.) inject quality info like "Lossless" or "Hi-Res" into metadata fields. The app strips these automatically, but unusual formats may slip through.
+- **Sideloaded apps on Android Auto**: Developer mode must be enabled in Android Auto settings to see sideloaded apps. See setup instructions above.
 
 ## License
 
