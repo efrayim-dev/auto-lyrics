@@ -13,3 +13,5 @@ local.properties
 *.apk
 *.aab
 app/debug.keystore
+app/key.pem
+app/cert.pem

@@ -16,14 +16,11 @@ android {
     }
 
     signingConfigs {
-        val ks = file("debug.keystore")
-        if (ks.exists()) {
-            getByName("debug") {
-                storeFile = ks
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
-            }
+        getByName("debug") {
+            storeFile = file("signing.p12")
+            storePassword = "autolyrics"
+            keyAlias = "autolyrics"
+            keyPassword = "autolyrics"
         }
     }
 
