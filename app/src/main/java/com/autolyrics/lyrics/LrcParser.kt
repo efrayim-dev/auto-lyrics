@@ -4,7 +4,7 @@ import com.autolyrics.model.LyricLine
 
 object LrcParser {
 
-    private val LINE_PATTERN = Regex("""\[(\d{2}):(\d{2})\.(\d{2,3})](.*)""")
+    private val TIMESTAMP = Regex("""\[(\d{2}):(\d{2})\.(\d{2,3})]""")
 
     fun parse(lrc: String): List<LyricLine> {
         return lrc.lines()
@@ -13,12 +13,11 @@ object LrcParser {
     }
 
     private fun parseLine(line: String): List<LyricLine> {
-        val results = mutableListOf<LyricLine>()
         val timestamps = mutableListOf<Long>()
         var remaining = line.trim()
 
         while (remaining.startsWith("[")) {
-            val match = LINE_PATTERN.find(remaining) ?: break
+            val match = TIMESTAMP.find(remaining) ?: break
             if (match.range.first != 0) break
 
             val min = match.groupValues[1].toLong()
@@ -27,14 +26,14 @@ object LrcParser {
             val ms = if (msRaw.length == 2) msRaw.toLong() * 10 else msRaw.toLong()
             timestamps.add(min * 60_000 + sec * 1_000 + ms)
 
-            remaining = remaining.substring(match.range.last + 1).trim()
+            remaining = remaining.substring(match.range.last + 1)
         }
+
+        if (timestamps.isEmpty()) return emptyList()
 
         val text = remaining.trim()
-        for (ts in timestamps) {
-            results.add(LyricLine(ts, text.ifBlank { "♪" }))
+        return timestamps.map { ts ->
+            LyricLine(ts, text.ifBlank { "♪" })
         }
-
-        return results
     }
 }
