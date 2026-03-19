@@ -12,8 +12,10 @@ import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.content.SharedPreferences
 import android.view.View
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -46,14 +48,22 @@ class MainActivity : AppCompatActivity() {
     private lateinit var delayBar: LinearLayout
     private lateinit var tvDelay: TextView
     private lateinit var divider: View
+    private lateinit var fontSettingsPanel: LinearLayout
+    private lateinit var tvFontSize: TextView
+    private lateinit var prefs: SharedPreferences
     private var lastScrolledIndex = -1
     private var currentColors: AlbumColors? = null
+    private var lyricsFontSizeSp = 16
+    private var lyricsFontFamily = "sans-serif"
+
+    private val fontButtons = mutableMapOf<String, Button>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         mediaTracker = MediaTracker.getInstance(this)
+        prefs = getSharedPreferences("auto_lyrics_prefs", MODE_PRIVATE)
 
         rootLayout = findViewById(R.id.root_layout)
         appBar = findViewById(R.id.layout_app_bar)
@@ -85,6 +95,51 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btn_delay_reset).setOnClickListener {
             mediaTracker.resetOffset()
         }
+
+        fontSettingsPanel = findViewById(R.id.layout_font_settings)
+        tvFontSize = findViewById(R.id.tv_font_size)
+
+        lyricsFontSizeSp = prefs.getInt("lyrics_font_size", 16)
+        lyricsFontFamily = prefs.getString("lyrics_font_family", "sans-serif") ?: "sans-serif"
+
+        applyFontSettings()
+
+        findViewById<ImageButton>(R.id.btn_settings_toggle).setOnClickListener {
+            fontSettingsPanel.visibility = if (fontSettingsPanel.visibility == View.VISIBLE)
+                View.GONE else View.VISIBLE
+        }
+
+        findViewById<Button>(R.id.btn_font_size_minus).setOnClickListener {
+            if (lyricsFontSizeSp > 12) {
+                lyricsFontSizeSp -= 2
+                saveFontSettings()
+                applyFontSettings()
+            }
+        }
+        findViewById<Button>(R.id.btn_font_size_plus).setOnClickListener {
+            if (lyricsFontSizeSp < 28) {
+                lyricsFontSizeSp += 2
+                saveFontSettings()
+                applyFontSettings()
+            }
+        }
+
+        val btnSans = findViewById<Button>(R.id.btn_font_sans)
+        val btnSerif = findViewById<Button>(R.id.btn_font_serif)
+        val btnMono = findViewById<Button>(R.id.btn_font_mono)
+        val btnCursive = findViewById<Button>(R.id.btn_font_cursive)
+
+        fontButtons["sans-serif"] = btnSans
+        fontButtons["serif"] = btnSerif
+        fontButtons["monospace"] = btnMono
+        fontButtons["cursive"] = btnCursive
+
+        btnSans.setOnClickListener { selectFont("sans-serif") }
+        btnSerif.setOnClickListener { selectFont("serif") }
+        btnMono.setOnClickListener { selectFont("monospace") }
+        btnCursive.setOnClickListener { selectFont("cursive") }
+
+        updateFontButtonHighlights()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -288,12 +343,12 @@ class MainActivity : AppCompatActivity() {
     private fun updatePermissionUi() {
         val enabled = isNotificationListenerEnabled()
         if (enabled) {
-            tvStatus.text = "✓  Notification access granted"
-            tvStatus.setBackgroundResource(R.drawable.bg_status_ok)
+            tvStatus.visibility = View.GONE
             btnPermission.visibility = View.GONE
         } else {
             tvStatus.text = "⚠  Notification access required"
             tvStatus.setBackgroundResource(R.drawable.bg_status_warn)
+            tvStatus.visibility = View.VISIBLE
             btnPermission.visibility = View.VISIBLE
         }
     }
@@ -313,6 +368,36 @@ class MainActivity : AppCompatActivity() {
             val targetY = (currentIndex.toFloat() / totalLines * tvLyrics.height).toInt()
             val offset = scrollView.height / 3
             scrollView.smoothScrollTo(0, maxOf(0, targetY - offset))
+        }
+    }
+
+    private fun selectFont(family: String) {
+        lyricsFontFamily = family
+        saveFontSettings()
+        applyFontSettings()
+        updateFontButtonHighlights()
+    }
+
+    private fun saveFontSettings() {
+        prefs.edit()
+            .putInt("lyrics_font_size", lyricsFontSizeSp)
+            .putString("lyrics_font_family", lyricsFontFamily)
+            .apply()
+    }
+
+    private fun applyFontSettings() {
+        tvLyrics.textSize = lyricsFontSizeSp.toFloat()
+        tvLyrics.typeface = Typeface.create(lyricsFontFamily, Typeface.NORMAL)
+        tvFontSize.text = "${lyricsFontSizeSp}sp"
+    }
+
+    private fun updateFontButtonHighlights() {
+        val selectedTint = Color.parseColor("#3A3A5E")
+        val normalTint = Color.parseColor("#2A2A3E")
+        fontButtons.forEach { (family, button) ->
+            button.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                if (family == lyricsFontFamily) selectedTint else normalTint
+            )
         }
     }
 

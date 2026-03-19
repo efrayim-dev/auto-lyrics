@@ -9,6 +9,8 @@
 # Gson
 -keep class com.autolyrics.lyrics.LrcLibClient$LrcLibResponse { *; }
 -keep class com.autolyrics.lyrics.LrcLibClient$LrcLibSearchResult { *; }
+-keep class com.autolyrics.lyrics.SyncLrcClient$SyncLrcResponse { *; }
 
-# Car App Library
--keep class androidx.car.app.** { *; }
+# MediaBrowserService
+-keep class androidx.media.** { *; }
+-keep class android.support.v4.media.** { *; }

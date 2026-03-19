@@ -55,16 +55,17 @@ class MediaListenerService : NotificationListenerService() {
     }
 
     private fun pickBestSession(controllers: List<MediaController>?) {
-        if (controllers.isNullOrEmpty()) {
+        val filtered = controllers?.filter { it.packageName != packageName }
+        if (filtered.isNullOrEmpty()) {
             MediaTracker.getInstance(this).onMediaSessionChanged(null)
             return
         }
 
-        val playing = controllers.firstOrNull { controller ->
+        val playing = filtered.firstOrNull { controller ->
             controller.playbackState?.state == PlaybackState.STATE_PLAYING
         }
 
-        val best = playing ?: controllers.first()
+        val best = playing ?: filtered.first()
         MediaTracker.getInstance(this).onMediaSessionChanged(best)
     }
 }

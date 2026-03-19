@@ -35,23 +35,18 @@
             </intent-filter>
         </service>
 
-        <!-- Android Auto Car App Service -->
+        <!-- Android Auto Media Browser Service -->
         <service
-            android:name=".auto.LyricsCarAppService"
+            android:name=".auto.LyricsBrowserService"
             android:exported="true">
             <intent-filter>
-                <action android:name="androidx.car.app.CarAppService" />
-                <category android:name="androidx.car.app.category.PARKING" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
 
         <meta-data
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
-
-        <meta-data
-            android:name="androidx.car.app.minCarApiLevel"
-            android:value="1" />
 
     </application>
 

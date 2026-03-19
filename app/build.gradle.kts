@@ -11,8 +11,8 @@ android {
         applicationId = "com.autolyrics"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.6.0"
+        versionCode = 9
+        versionName = "1.7.0"
     }
 
     signingConfigs {
@@ -55,8 +55,8 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
 
-    // Android Auto - Car App Library
-    implementation("androidx.car.app:app:1.4.0")
+    // Android Auto - MediaBrowserService
+    implementation("androidx.media:media:1.7.0")
 
     // Networking
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
