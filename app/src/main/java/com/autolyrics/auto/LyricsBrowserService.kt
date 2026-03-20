@@ -1,6 +1,5 @@
 package com.autolyrics.auto
 
-import android.content.Intent
 import android.media.session.MediaController
 import android.media.session.PlaybackState
 import android.os.Bundle
@@ -27,14 +26,16 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     private var lastNotifyTime = 0L
     private var pendingNotify = false
-    private var displayedLineIndex = -1
+    private var displayedWindowStart = -1
+    private var displayedWindowEnd = -1
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrackTitle: String? = null
+    private var lastQueueTrackTitle: String? = null
 
     companion object {
         private const val ROOT_ID = "root"
-        private const val LYRICS_ID = "lyrics"
-        private const val NOTIFY_THROTTLE_MS = 1000L
+        private const val WINDOW_SIZE = 6
+        private const val NOTIFY_THROTTLE_MS = 2000L
     }
 
     override fun onCreate() {
@@ -77,58 +78,62 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val state = mediaTracker.state.value
         val items = mutableListOf<MediaBrowserCompat.MediaItem>()
 
-        when (parentId) {
-            ROOT_ID -> {
-                val trackLabel = state.track?.let { "${it.title} — ${it.artist}" }
-                    ?: "Auto Lyrics"
-                items.add(
-                    MediaBrowserCompat.MediaItem(
-                        MediaDescriptionCompat.Builder()
-                            .setMediaId(LYRICS_ID)
-                            .setTitle(trackLabel)
-                            .setSubtitle("Tap to view lyrics")
-                            .build(),
-                        MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
-                    )
-                )
+        when (state.status) {
+            LyricsStatus.NO_MEDIA -> {
+                items.add(buildTextItem("no_media", "Play a song to see lyrics"))
             }
-            LYRICS_ID -> {
-                when (state.status) {
-                    LyricsStatus.NO_MEDIA -> {
-                        items.add(buildTextItem("no_media", "Play a song to see lyrics"))
-                    }
-                    LyricsStatus.LOADING -> {
-                        items.add(buildTextItem("loading", "Loading lyrics…"))
-                    }
-                    LyricsStatus.NOT_FOUND -> {
-                        items.add(buildTextItem("not_found", "No lyrics found for this track"))
-                    }
-                    LyricsStatus.ERROR -> {
-                        items.add(buildTextItem("error", "Error loading lyrics"))
-                    }
-                    LyricsStatus.FOUND, LyricsStatus.PLAIN_ONLY -> {
-                        if (state.status == LyricsStatus.PLAIN_ONLY) {
-                            items.add(buildTextItem("info", "ℹ  Lyrics are not synced to playback"))
-                        }
-                        val sourceTag = if (state.source.isNotBlank()) state.source else null
-                        if (sourceTag != null) {
-                            items.add(buildTextItem("source", "Source: $sourceTag"))
-                        }
-                        state.lines.forEachIndexed { i, line ->
-                            val isCurrent = i == state.currentIndex && state.status == LyricsStatus.FOUND
-                            val prefix = if (isCurrent) "▶  " else "    "
-                            val text = line.text.ifBlank { "♪" }
-                            items.add(buildTextItem("line_$i", "$prefix$text"))
-                        }
-                        if (state.lines.isEmpty()) {
-                            items.add(buildTextItem("empty", "♪"))
-                        }
-                    }
+            LyricsStatus.LOADING -> {
+                items.add(buildTextItem("loading", "Loading lyrics…"))
+            }
+            LyricsStatus.NOT_FOUND -> {
+                items.add(buildTextItem("not_found", "No lyrics found for this track"))
+            }
+            LyricsStatus.ERROR -> {
+                items.add(buildTextItem("error", "Error loading lyrics"))
+            }
+            LyricsStatus.FOUND -> {
+                buildWindowedLyrics(state, items)
+            }
+            LyricsStatus.PLAIN_ONLY -> {
+                items.add(buildTextItem("info", "ℹ  Lyrics are not synced to playback"))
+                val maxLines = minOf(state.lines.size, WINDOW_SIZE - 1)
+                for (i in 0 until maxLines) {
+                    val text = state.lines[i].text.ifBlank { "♪" }
+                    items.add(buildTextItem("line_$i", text))
+                }
+                if (state.lines.isEmpty()) {
+                    items.add(buildTextItem("empty", "♪"))
                 }
             }
         }
 
         result.sendResult(items)
+    }
+
+    private fun buildWindowedLyrics(
+        state: LyricsState,
+        items: MutableList<MediaBrowserCompat.MediaItem>
+    ) {
+        val lines = state.lines
+        if (lines.isEmpty()) {
+            items.add(buildTextItem("empty", "♪"))
+            return
+        }
+
+        val currentIdx = maxOf(0, state.currentIndex)
+        val half = WINDOW_SIZE / 2
+
+        val windowStart = maxOf(0, currentIdx - half)
+        val windowEnd = minOf(lines.size, windowStart + WINDOW_SIZE)
+        val adjustedStart = maxOf(0, windowEnd - WINDOW_SIZE)
+
+        for (i in adjustedStart until windowEnd) {
+            val line = lines[i]
+            val isCurrent = i == state.currentIndex
+            val prefix = if (isCurrent) "▶  " else "    "
+            val text = line.text.ifBlank { "♪" }
+            items.add(buildTextItem("line_$i", "$prefix$text"))
+        }
     }
 
     private fun buildTextItem(id: String, text: String): MediaBrowserCompat.MediaItem {
@@ -181,6 +186,37 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
         mediaSession.setMetadata(metaBuilder.build())
 
+        val trackTitle = state.track?.title
+        if (trackTitle != lastQueueTrackTitle &&
+            (state.status == LyricsStatus.FOUND || state.status == LyricsStatus.PLAIN_ONLY)
+        ) {
+            lastQueueTrackTitle = trackTitle
+            val queueItems = state.lines.mapIndexed { i, line ->
+                MediaSessionCompat.QueueItem(
+                    MediaDescriptionCompat.Builder()
+                        .setMediaId("q_$i")
+                        .setTitle(line.text.ifBlank { "♪" })
+                        .build(),
+                    i.toLong()
+                )
+            }
+            mediaSession.setQueue(queueItems)
+            mediaSession.setQueueTitle("Lyrics")
+        } else if (state.status != LyricsStatus.FOUND && state.status != LyricsStatus.PLAIN_ONLY) {
+            if (lastQueueTrackTitle != null) {
+                lastQueueTrackTitle = null
+                mediaSession.setQueue(emptyList())
+            }
+        }
+
+        if (state.currentIndex >= 0) {
+            mediaSession.setPlaybackState(buildPlaybackState(state, state.currentIndex.toLong()))
+        } else {
+            mediaSession.setPlaybackState(buildPlaybackState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN))
+        }
+    }
+
+    private fun buildPlaybackState(state: LyricsState, activeQueueItemId: Long): PlaybackStateCompat {
         val pbState = if (state.isPlaying) {
             PlaybackStateCompat.STATE_PLAYING
         } else if (state.track != null) {
@@ -195,28 +231,42 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             0L
         }
 
-        mediaSession.setPlaybackState(
-            PlaybackStateCompat.Builder()
-                .setState(pbState, position, if (state.isPlaying) 1.0f else 0f)
-                .setActions(
-                    PlaybackStateCompat.ACTION_PLAY or
-                    PlaybackStateCompat.ACTION_PAUSE or
-                    PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                    PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                    PlaybackStateCompat.ACTION_PLAY_PAUSE
-                )
-                .build()
-        )
+        return PlaybackStateCompat.Builder()
+            .setState(pbState, position, if (state.isPlaying) 1.0f else 0f)
+            .setActions(
+                PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM
+            )
+            .setActiveQueueItemId(activeQueueItemId)
+            .build()
+    }
+
+    private fun computeWindow(state: LyricsState): Pair<Int, Int> {
+        val lines = state.lines
+        if (lines.isEmpty()) return Pair(-1, -1)
+        val currentIdx = maxOf(0, state.currentIndex)
+        val half = WINDOW_SIZE / 2
+        val windowStart = maxOf(0, currentIdx - half)
+        val windowEnd = minOf(lines.size, windowStart + WINDOW_SIZE)
+        val adjustedStart = maxOf(0, windowEnd - WINDOW_SIZE)
+        return Pair(adjustedStart, windowEnd)
     }
 
     private fun throttledNotifyChildren(state: LyricsState) {
-        val lineChanged = state.currentIndex != displayedLineIndex
         val statusChanged = state.status != displayedStatus
         val trackChanged = state.track?.title != displayedTrackTitle
 
-        if (!lineChanged && !statusChanged && !trackChanged) return
+        val (winStart, winEnd) = computeWindow(state)
+        val windowChanged = winStart != displayedWindowStart || winEnd != displayedWindowEnd
 
-        displayedLineIndex = state.currentIndex
+        if (!windowChanged && !statusChanged && !trackChanged) return
+
+        displayedWindowStart = winStart
+        displayedWindowEnd = winEnd
         displayedStatus = state.status
         displayedTrackTitle = state.track?.title
 
@@ -226,14 +276,12 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         if (elapsed >= NOTIFY_THROTTLE_MS) {
             lastNotifyTime = now
             notifyChildrenChanged(ROOT_ID)
-            notifyChildrenChanged(LYRICS_ID)
         } else if (!pendingNotify) {
             pendingNotify = true
             handler.postDelayed({
                 pendingNotify = false
                 lastNotifyTime = System.currentTimeMillis()
                 notifyChildrenChanged(ROOT_ID)
-                notifyChildrenChanged(LYRICS_ID)
             }, NOTIFY_THROTTLE_MS - elapsed)
         }
     }
