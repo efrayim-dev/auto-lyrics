@@ -20,6 +20,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.appcompat.widget.SwitchCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
@@ -50,11 +51,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var divider: View
     private lateinit var fontSettingsPanel: LinearLayout
     private lateinit var tvFontSize: TextView
+    private lateinit var switchAaKaraoke: SwitchCompat
+    private lateinit var tvAaDelay: TextView
     private lateinit var prefs: SharedPreferences
     private var lastScrolledIndex = -1
     private var currentColors: AlbumColors? = null
     private var lyricsFontSizeSp = 16
     private var lyricsFontFamily = "sans-serif"
+    private var aaOffsetMs = 0L
 
     private val fontButtons = mutableMapOf<String, Button>()
 
@@ -140,6 +144,33 @@ class MainActivity : AppCompatActivity() {
         btnCursive.setOnClickListener { selectFont("cursive") }
 
         updateFontButtonHighlights()
+
+        switchAaKaraoke = findViewById(R.id.switch_aa_karaoke)
+        tvAaDelay = findViewById(R.id.tv_aa_delay)
+
+        switchAaKaraoke.isChecked = prefs.getBoolean("aa_karaoke_enabled", true)
+        aaOffsetMs = prefs.getLong("aa_offset_ms", 0L)
+        updateAaDelayDisplay()
+
+        switchAaKaraoke.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("aa_karaoke_enabled", isChecked).apply()
+        }
+
+        findViewById<Button>(R.id.btn_aa_delay_minus).setOnClickListener {
+            aaOffsetMs -= 100
+            prefs.edit().putLong("aa_offset_ms", aaOffsetMs).apply()
+            updateAaDelayDisplay()
+        }
+        findViewById<Button>(R.id.btn_aa_delay_plus).setOnClickListener {
+            aaOffsetMs += 100
+            prefs.edit().putLong("aa_offset_ms", aaOffsetMs).apply()
+            updateAaDelayDisplay()
+        }
+        findViewById<Button>(R.id.btn_aa_delay_reset).setOnClickListener {
+            aaOffsetMs = 0L
+            prefs.edit().putLong("aa_offset_ms", 0L).apply()
+            updateAaDelayDisplay()
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -369,6 +400,11 @@ class MainActivity : AppCompatActivity() {
             val offset = scrollView.height / 3
             scrollView.smoothScrollTo(0, maxOf(0, targetY - offset))
         }
+    }
+
+    private fun updateAaDelayDisplay() {
+        val sign = if (aaOffsetMs > 0) "+" else ""
+        tvAaDelay.text = "${sign}${aaOffsetMs}ms"
     }
 
     private fun selectFont(family: String) {
