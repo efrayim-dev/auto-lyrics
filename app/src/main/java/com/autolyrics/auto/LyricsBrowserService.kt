@@ -30,7 +30,6 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private var displayedWindowEnd = -1
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrackTitle: String? = null
-    private var lastQueueTrackTitle: String? = null
 
     companion object {
         private const val ROOT_ID = "root"
@@ -83,18 +82,24 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 items.add(buildTextItem("no_media", "Play a song to see lyrics"))
             }
             LyricsStatus.LOADING -> {
+                addTrackHeader(state, items)
                 items.add(buildTextItem("loading", "Loading lyrics…"))
             }
             LyricsStatus.NOT_FOUND -> {
+                addTrackHeader(state, items)
                 items.add(buildTextItem("not_found", "No lyrics found for this track"))
             }
             LyricsStatus.ERROR -> {
+                addTrackHeader(state, items)
                 items.add(buildTextItem("error", "Error loading lyrics"))
             }
             LyricsStatus.FOUND -> {
+                addTrackHeader(state, items)
                 buildWindowedLyrics(state, items)
+                addProgressRow(state, items)
             }
             LyricsStatus.PLAIN_ONLY -> {
+                addTrackHeader(state, items)
                 items.add(buildTextItem("info", "ℹ  Lyrics are not synced to playback"))
                 val maxLines = minOf(state.lines.size, WINDOW_SIZE - 1)
                 for (i in 0 until maxLines) {
@@ -108,6 +113,58 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         }
 
         result.sendResult(items)
+    }
+
+    private fun addTrackHeader(
+        state: LyricsState,
+        items: MutableList<MediaBrowserCompat.MediaItem>
+    ) {
+        val track = state.track ?: return
+        val descBuilder = MediaDescriptionCompat.Builder()
+            .setMediaId("header")
+            .setTitle(track.title)
+            .setSubtitle(track.artist)
+
+        state.albumArt?.let { art ->
+            descBuilder.setIconBitmap(art)
+        }
+
+        items.add(
+            MediaBrowserCompat.MediaItem(
+                descBuilder.build(),
+                MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
+            )
+        )
+    }
+
+    private fun addProgressRow(
+        state: LyricsState,
+        items: MutableList<MediaBrowserCompat.MediaItem>
+    ) {
+        val track = state.track ?: return
+        if (track.durationMs <= 0) return
+
+        val posMs = try {
+            mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
+        } catch (_: Exception) {
+            return
+        }
+
+        val posStr = formatTime(posMs)
+        val durStr = formatTime(track.durationMs)
+        val fraction = (posMs.toFloat() / track.durationMs).coerceIn(0f, 1f)
+        val filled = (fraction * 20).toInt()
+        val empty = 20 - filled
+        val bar = "▬".repeat(filled) + "○" + "─".repeat(empty)
+
+        items.add(buildTextItem("progress", "$bar  $posStr / $durStr"))
+    }
+
+    private fun formatTime(ms: Long): String {
+        val totalSec = ms / 1000
+        val min = totalSec / 60
+        val sec = totalSec % 60
+        return "%d:%02d".format(min, sec)
     }
 
     private fun buildWindowedLyrics(
@@ -156,6 +213,13 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             if (track.durationMs > 0) {
                 metaBuilder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, track.durationMs)
             }
+
+            val displayTitle = if (track.artist.isNotBlank()) {
+                "${track.title} — ${track.artist}"
+            } else {
+                track.title
+            }
+            metaBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, displayTitle)
         }
 
         state.albumArt?.let { art ->
@@ -163,60 +227,29 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         }
 
         val currentLine = state.lines.getOrNull(state.currentIndex)
-        if (currentLine != null) {
-            metaBuilder.putString(
-                MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
-                currentLine.text
-            )
+        val displaySubtitle = if (currentLine != null) {
+            currentLine.text
         } else {
-            val subtitle = when (state.status) {
+            when (state.status) {
                 LyricsStatus.LOADING -> "Loading lyrics…"
                 LyricsStatus.NOT_FOUND -> "No lyrics found"
                 LyricsStatus.ERROR -> "Error loading lyrics"
                 LyricsStatus.PLAIN_ONLY -> state.lines.firstOrNull()?.text ?: ""
                 else -> ""
             }
-            if (subtitle.isNotBlank()) {
-                metaBuilder.putString(
-                    MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
-                    subtitle
-                )
-            }
+        }
+        if (displaySubtitle.isNotBlank()) {
+            metaBuilder.putString(
+                MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
+                displaySubtitle
+            )
         }
 
         mediaSession.setMetadata(metaBuilder.build())
-
-        val trackTitle = state.track?.title
-        if (trackTitle != lastQueueTrackTitle &&
-            (state.status == LyricsStatus.FOUND || state.status == LyricsStatus.PLAIN_ONLY)
-        ) {
-            lastQueueTrackTitle = trackTitle
-            val queueItems = state.lines.mapIndexed { i, line ->
-                MediaSessionCompat.QueueItem(
-                    MediaDescriptionCompat.Builder()
-                        .setMediaId("q_$i")
-                        .setTitle(line.text.ifBlank { "♪" })
-                        .build(),
-                    i.toLong()
-                )
-            }
-            mediaSession.setQueue(queueItems)
-            mediaSession.setQueueTitle("Lyrics")
-        } else if (state.status != LyricsStatus.FOUND && state.status != LyricsStatus.PLAIN_ONLY) {
-            if (lastQueueTrackTitle != null) {
-                lastQueueTrackTitle = null
-                mediaSession.setQueue(emptyList())
-            }
-        }
-
-        if (state.currentIndex >= 0) {
-            mediaSession.setPlaybackState(buildPlaybackState(state, state.currentIndex.toLong()))
-        } else {
-            mediaSession.setPlaybackState(buildPlaybackState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN))
-        }
+        mediaSession.setPlaybackState(buildPlaybackState(state))
     }
 
-    private fun buildPlaybackState(state: LyricsState, activeQueueItemId: Long): PlaybackStateCompat {
+    private fun buildPlaybackState(state: LyricsState): PlaybackStateCompat {
         val pbState = if (state.isPlaying) {
             PlaybackStateCompat.STATE_PLAYING
         } else if (state.track != null) {
@@ -239,9 +272,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM
+                PlaybackStateCompat.ACTION_SEEK_TO
             )
-            .setActiveQueueItemId(activeQueueItemId)
             .build()
     }
 
@@ -321,6 +353,21 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
         override fun onStop() {
             getActiveMediaController()?.transportControls?.stop()
+        }
+
+        override fun onSeekTo(pos: Long) {
+            getActiveMediaController()?.transportControls?.seekTo(pos)
+        }
+
+        override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
+            if (mediaId == null || !mediaId.startsWith("line_")) return
+            val index = mediaId.removePrefix("line_").toIntOrNull() ?: return
+            val state = mediaTracker.state.value
+            if (state.status != LyricsStatus.FOUND) return
+            val line = state.lines.getOrNull(index) ?: return
+            if (line.timeMs > 0) {
+                getActiveMediaController()?.transportControls?.seekTo(line.timeMs)
+            }
         }
     }
 }
