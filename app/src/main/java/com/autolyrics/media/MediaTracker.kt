@@ -46,10 +46,6 @@ class MediaTracker private constructor(context: Context) {
     private var pendingArt: Bitmap? = null
     private var lyricsOffsetMs: Long = 0L
 
-    private companion object {
-        const val CACHE_REFRESH_MS = 7L * 24 * 60 * 60 * 1000
-    }
-
     init {
         lyricsOffsetMs = prefs.getLong("lyrics_offset_ms", 0L)
         _state.value = _state.value.copy(offsetMs = lyricsOffsetMs)
@@ -418,6 +414,8 @@ class MediaTracker private constructor(context: Context) {
     }
 
     companion object {
+        private const val CACHE_REFRESH_MS = 7L * 24 * 60 * 60 * 1000
+
         @Volatile
         private var instance: MediaTracker? = null
 
