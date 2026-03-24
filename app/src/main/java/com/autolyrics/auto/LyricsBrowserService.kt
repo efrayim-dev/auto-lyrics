@@ -47,10 +47,10 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     companion object {
         private const val ROOT_ID = "root"
-        private const val WINDOW_SIZE = 6
-        private const val NOTIFY_THROTTLE_MS = 1000L
-        private const val BROWSE_KARAOKE_WINDOW_MS = 1200L
-        private const val SUBTITLE_KARAOKE_WINDOW_MS = 600L
+        private const val WINDOW_SIZE = 4
+        private const val NOTIFY_THROTTLE_MS = 800L
+        private const val BROWSE_KARAOKE_WINDOW_MS = 1000L
+        private const val SUBTITLE_KARAOKE_WINDOW_MS = 400L
     }
 
     override fun onCreate() {
@@ -77,7 +77,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
         scope.launch {
             while (isActive) {
-                delay(500)
+                delay(300)
                 updateSubtitleKaraoke()
             }
         }
@@ -126,7 +126,6 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             LyricsStatus.FOUND -> {
                 addTrackHeader(state, items)
                 buildWindowedLyrics(state, items)
-                addProgressRow(state, items)
             }
             LyricsStatus.PLAIN_ONLY -> {
                 addTrackHeader(state, items)
@@ -150,10 +149,24 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         items: MutableList<MediaBrowserCompat.MediaItem>
     ) {
         val track = state.track ?: return
+
+        val subtitle = buildString {
+            append(track.artist)
+            val posMs = try {
+                mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
+            } catch (_: Exception) { -1L }
+            if (posMs >= 0 && track.durationMs > 0) {
+                append("  ·  ")
+                append(formatTime(posMs))
+                append(" / ")
+                append(formatTime(track.durationMs))
+            }
+        }
+
         val descBuilder = MediaDescriptionCompat.Builder()
             .setMediaId("header")
             .setTitle(track.title)
-            .setSubtitle(track.artist)
+            .setSubtitle(subtitle)
 
         state.albumArt?.let { art ->
             descBuilder.setIconBitmap(art)
@@ -162,32 +175,9 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         items.add(
             MediaBrowserCompat.MediaItem(
                 descBuilder.build(),
-                MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
+                MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
             )
         )
-    }
-
-    private fun addProgressRow(
-        state: LyricsState,
-        items: MutableList<MediaBrowserCompat.MediaItem>
-    ) {
-        val track = state.track ?: return
-        if (track.durationMs <= 0) return
-
-        val posMs = try {
-            mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
-        } catch (_: Exception) {
-            return
-        }
-
-        val posStr = formatTime(posMs)
-        val durStr = formatTime(track.durationMs)
-        val fraction = (posMs.toFloat() / track.durationMs).coerceIn(0f, 1f)
-        val filled = (fraction * 20).toInt()
-        val empty = 20 - filled
-        val bar = "▬".repeat(filled) + "○" + "─".repeat(empty)
-
-        items.add(buildTextItem("progress", "$bar  $posStr / $durStr"))
     }
 
     private fun formatTime(ms: Long): String {
@@ -341,6 +331,11 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     }
 
     private fun updateMediaSession(state: LyricsState) {
+        if (state.track?.title != displayedTrackTitle) {
+            mediaSession.isActive = true
+            lastSubtitleText = null
+        }
+
         val metaBuilder = buildBaseMetadata(state)
 
         val subtitleText = getSubtitleText(state)
@@ -420,6 +415,18 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val statusChanged = state.status != displayedStatus
         val trackChanged = state.track?.title != displayedTrackTitle
 
+        if (trackChanged) {
+            displayedWindowStart = -1
+            displayedWindowEnd = -1
+            displayedStatus = state.status
+            displayedTrackTitle = state.track?.title
+            lastNotifyTime = System.currentTimeMillis()
+            handler.removeCallbacksAndMessages(null)
+            pendingNotify = false
+            notifyChildrenChanged(ROOT_ID)
+            return
+        }
+
         val (winStart, winEnd) = computeWindow(state)
         val windowChanged = winStart != displayedWindowStart || winEnd != displayedWindowEnd
 
@@ -427,12 +434,11 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             state.status == LyricsStatus.FOUND &&
             state.lines.getOrNull(state.currentIndex)?.words?.isNotEmpty() == true
 
-        if (!windowChanged && !statusChanged && !trackChanged && !karaokeActive) return
+        if (!windowChanged && !statusChanged && !karaokeActive) return
 
         displayedWindowStart = winStart
         displayedWindowEnd = winEnd
         displayedStatus = state.status
-        displayedTrackTitle = state.track?.title
 
         val now = System.currentTimeMillis()
         val elapsed = now - lastNotifyTime

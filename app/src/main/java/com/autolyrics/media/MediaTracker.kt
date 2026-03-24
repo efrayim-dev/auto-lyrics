@@ -11,6 +11,7 @@ import android.os.Looper
 import android.os.SystemClock
 import com.autolyrics.lyrics.LrcLibClient
 import com.autolyrics.lyrics.LrcParser
+import com.autolyrics.lyrics.LyricsCache
 import com.autolyrics.lyrics.MetadataCleaner
 import com.autolyrics.lyrics.SyncLrcClient
 import com.autolyrics.model.LyricLine
@@ -29,6 +30,7 @@ class MediaTracker private constructor(context: Context) {
     private val handler = Handler(Looper.getMainLooper())
     private val prefs: SharedPreferences =
         context.getSharedPreferences("auto_lyrics_prefs", Context.MODE_PRIVATE)
+    private val lyricsCache = LyricsCache(context)
 
     private val _state = MutableStateFlow(LyricsState())
     val state: StateFlow<LyricsState> = _state.asStateFlow()
@@ -38,10 +40,15 @@ class MediaTracker private constructor(context: Context) {
     private var lastPositionUpdateTime: Long = 0
     private var playbackSpeed: Float = 1.0f
     private var fetchJob: Job? = null
+    private var prefetchJob: Job? = null
     private var artJob: Job? = null
     private var pendingTrack: TrackInfo? = null
     private var pendingArt: Bitmap? = null
     private var lyricsOffsetMs: Long = 0L
+
+    private companion object {
+        const val CACHE_REFRESH_MS = 7L * 24 * 60 * 60 * 1000
+    }
 
     init {
         lyricsOffsetMs = prefs.getLong("lyrics_offset_ms", 0L)
@@ -240,12 +247,37 @@ class MediaTracker private constructor(context: Context) {
         fetchJob?.cancel()
         fetchJob = scope.launch(Dispatchers.IO) {
             try {
+                val cached = lyricsCache.get(track.title, track.artist)
+                if (cached != null) {
+                    val (lines, status, source) = cached
+                    withContext(Dispatchers.Main) {
+                        if (_state.value.track != track) return@withContext
+                        _state.value = _state.value.copy(
+                            lines = lines,
+                            currentIndex = -1,
+                            currentWordIndex = -1,
+                            status = status,
+                            source = "$source (cached)"
+                        )
+                        if (status == LyricsStatus.FOUND) {
+                            updateCurrentPosition()
+                        }
+                    }
+
+                    val cacheAge = lyricsCache.getAge(track.title, track.artist)
+                    if (cacheAge < CACHE_REFRESH_MS) {
+                        prefetchNextSong()
+                        return@launch
+                    }
+                }
+
                 val result = fetchFromSyncLrc(track) ?: fetchFromLrcLib(track)
 
                 withContext(Dispatchers.Main) {
                     if (_state.value.track != track) return@withContext
 
                     if (result != null) {
+                        lyricsCache.put(track.title, track.artist, result.lines, result.status, result.source)
                         _state.value = _state.value.copy(
                             lines = result.lines,
                             currentIndex = -1,
@@ -256,24 +288,65 @@ class MediaTracker private constructor(context: Context) {
                         if (result.status == LyricsStatus.FOUND) {
                             updateCurrentPosition()
                         }
-                    } else {
+                    } else if (cached == null) {
                         _state.value = _state.value.copy(
                             status = LyricsStatus.NOT_FOUND,
                             source = ""
                         )
                     }
                 }
+
+                prefetchNextSong()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 withContext(Dispatchers.Main) {
-                    if (_state.value.track == track) {
+                    if (_state.value.track == track && _state.value.status == LyricsStatus.LOADING) {
                         _state.value = _state.value.copy(
                             status = LyricsStatus.ERROR,
                             source = ""
                         )
                     }
                 }
+            }
+        }
+    }
+
+    private fun prefetchNextSong() {
+        prefetchJob?.cancel()
+        prefetchJob = scope.launch(Dispatchers.IO) {
+            try {
+                val controller = activeController ?: return@launch
+                val queue = controller.queue ?: return@launch
+                val currentTitle = _state.value.track?.title ?: return@launch
+                val currentArtist = _state.value.track?.artist ?: return@launch
+
+                var foundCurrent = false
+                for (item in queue) {
+                    val desc = item.description
+                    val title = MetadataCleaner.cleanTitle(desc.title?.toString() ?: continue)
+                    val artist = MetadataCleaner.cleanArtist(desc.subtitle?.toString() ?: "")
+
+                    if (!foundCurrent) {
+                        if (title.equals(currentTitle, ignoreCase = true) &&
+                            artist.equals(currentArtist, ignoreCase = true)
+                        ) {
+                            foundCurrent = true
+                        }
+                        continue
+                    }
+
+                    if (lyricsCache.get(title, artist) != null) return@launch
+
+                    val nextTrack = TrackInfo(title, artist, "", 0)
+                    val result = fetchFromSyncLrc(nextTrack) ?: fetchFromLrcLib(nextTrack)
+                    if (result != null) {
+                        lyricsCache.put(title, artist, result.lines, result.status, result.source)
+                    }
+                    return@launch
+                }
+            } catch (_: Exception) {
+                // prefetch failures are non-fatal
             }
         }
     }

@@ -12,7 +12,9 @@ import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
+import android.annotation.SuppressLint
 import android.content.SharedPreferences
+import android.view.MotionEvent
 import android.view.View
 import android.widget.Button
 import android.widget.ImageButton
@@ -35,6 +37,7 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
 
     private lateinit var mediaTracker: MediaTracker
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private lateinit var rootLayout: LinearLayout
     private lateinit var appBar: LinearLayout
     private lateinit var tvAppTitle: TextView
@@ -53,14 +56,21 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvFontSize: TextView
     private lateinit var switchAaKaraoke: SwitchCompat
     private lateinit var tvAaDelay: TextView
+    private lateinit var btnJumpToCurrent: Button
     private lateinit var prefs: SharedPreferences
     private var lastScrolledIndex = -1
     private var currentColors: AlbumColors? = null
     private var lyricsFontSizeSp = 16
     private var lyricsFontFamily = "sans-serif"
     private var aaOffsetMs = 0L
+    private var userScrolling = false
+    private var userTouching = false
 
     private val fontButtons = mutableMapOf<String, Button>()
+    private val scrollResetRunnable = Runnable {
+        userScrolling = false
+        btnJumpToCurrent.visibility = View.GONE
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +95,9 @@ class MainActivity : AppCompatActivity() {
         divider = findViewById(R.id.divider)
 
         ivAlbumArt.clipToOutline = true
+        btnJumpToCurrent = findViewById(R.id.btn_jump_to_current)
+
+        setupScrollDetection()
 
         btnPermission.setOnClickListener {
             startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
@@ -284,7 +297,7 @@ class MainActivity : AppCompatActivity() {
             offsetMs > 0 -> "+"
             else -> ""
         }
-        tvDelay.text = "Sync: ${sign}${offsetMs}ms"
+        tvDelay.text = "Phone Sync: ${sign}${offsetMs}ms"
     }
 
     private fun renderSyncedLyrics(state: LyricsState) {
@@ -362,7 +375,9 @@ class MainActivity : AppCompatActivity() {
 
         if (state.currentIndex != lastScrolledIndex && state.currentIndex >= 0) {
             lastScrolledIndex = state.currentIndex
-            autoScrollToCurrentLine(state.currentIndex, state.lines.size)
+            if (!userScrolling) {
+                autoScrollToCurrentLine(state.currentIndex, state.lines.size)
+            }
         }
     }
 
@@ -391,6 +406,44 @@ class MainActivity : AppCompatActivity() {
         )
         val component = ComponentName(this, MediaListenerService::class.java)
         return flat?.contains(component.flattenToString()) == true
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun setupScrollDetection() {
+        scrollView.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    userTouching = true
+                    handler.removeCallbacks(scrollResetRunnable)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    userTouching = false
+                    if (userScrolling) {
+                        handler.removeCallbacks(scrollResetRunnable)
+                        handler.postDelayed(scrollResetRunnable, 8000)
+                    }
+                }
+            }
+            false
+        }
+
+        scrollView.setOnScrollChangeListener { _, _, _, _, _ ->
+            if (userTouching && !userScrolling) {
+                userScrolling = true
+                btnJumpToCurrent.visibility = View.VISIBLE
+            }
+        }
+
+        btnJumpToCurrent.setOnClickListener {
+            userScrolling = false
+            btnJumpToCurrent.visibility = View.GONE
+            handler.removeCallbacks(scrollResetRunnable)
+            val state = mediaTracker.state.value
+            if (state.currentIndex >= 0) {
+                lastScrolledIndex = state.currentIndex
+                autoScrollToCurrentLine(state.currentIndex, state.lines.size)
+            }
+        }
     }
 
     private fun autoScrollToCurrentLine(currentIndex: Int, totalLines: Int) {
