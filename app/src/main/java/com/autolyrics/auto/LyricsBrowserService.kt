@@ -30,6 +30,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private var pendingNotify = false
     private var displayedWindowStart = -1
     private var displayedWindowEnd = -1
+    private var displayedCurrentIdx = -1
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrackTitle: String? = null
     private var lastSubtitleText: String? = null
@@ -40,8 +41,14 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private val prefsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
             when (key) {
-                "aa_karaoke_enabled" -> aaKaraokeEnabled = sp.getBoolean(key, true)
-                "aa_offset_ms" -> aaOffsetMs = sp.getLong(key, 0L)
+                "aa_karaoke_enabled" -> {
+                    aaKaraokeEnabled = sp.getBoolean(key, true)
+                    forceRefresh()
+                }
+                "aa_offset_ms" -> {
+                    aaOffsetMs = sp.getLong(key, 0L)
+                    forceRefresh()
+                }
             }
         }
 
@@ -399,16 +406,26 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     // --- Throttled browse tree updates ---
 
-    private fun computeWindow(state: LyricsState): Pair<Int, Int> {
+    private data class WindowInfo(val start: Int, val end: Int, val currentIdx: Int)
+
+    private fun computeWindow(state: LyricsState): WindowInfo {
         val lines = state.lines
-        if (lines.isEmpty()) return Pair(-1, -1)
+        if (lines.isEmpty()) return WindowInfo(-1, -1, -1)
         val posMs = getAaPositionMs()
         val currentIdx = findLineIndex(lines, posMs).coerceAtLeast(0)
         val half = WINDOW_SIZE / 2
         val windowStart = maxOf(0, currentIdx - half)
         val windowEnd = minOf(lines.size, windowStart + WINDOW_SIZE)
         val adjustedStart = maxOf(0, windowEnd - WINDOW_SIZE)
-        return Pair(adjustedStart, windowEnd)
+        return WindowInfo(adjustedStart, windowEnd, currentIdx)
+    }
+
+    private fun forceRefresh() {
+        displayedWindowStart = -1
+        displayedWindowEnd = -1
+        displayedCurrentIdx = -1
+        lastNotifyTime = 0L
+        notifyChildrenChanged(ROOT_ID)
     }
 
     private fun throttledNotifyChildren(state: LyricsState) {
@@ -418,6 +435,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         if (trackChanged) {
             displayedWindowStart = -1
             displayedWindowEnd = -1
+            displayedCurrentIdx = -1
             displayedStatus = state.status
             displayedTrackTitle = state.track?.title
             lastNotifyTime = System.currentTimeMillis()
@@ -427,17 +445,19 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             return
         }
 
-        val (winStart, winEnd) = computeWindow(state)
-        val windowChanged = winStart != displayedWindowStart || winEnd != displayedWindowEnd
+        val win = computeWindow(state)
+        val windowChanged = win.start != displayedWindowStart || win.end != displayedWindowEnd
+        val lineChanged = win.currentIdx != displayedCurrentIdx
 
         val karaokeActive = aaKaraokeEnabled &&
             state.status == LyricsStatus.FOUND &&
             state.lines.getOrNull(state.currentIndex)?.words?.isNotEmpty() == true
 
-        if (!windowChanged && !statusChanged && !karaokeActive) return
+        if (!windowChanged && !lineChanged && !statusChanged && !karaokeActive) return
 
-        displayedWindowStart = winStart
-        displayedWindowEnd = winEnd
+        displayedWindowStart = win.start
+        displayedWindowEnd = win.end
+        displayedCurrentIdx = win.currentIdx
         displayedStatus = state.status
 
         val now = System.currentTimeMillis()
