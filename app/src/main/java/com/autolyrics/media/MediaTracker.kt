@@ -108,6 +108,13 @@ class MediaTracker private constructor(context: Context) {
         updateCurrentPosition()
     }
 
+    fun setOffset(ms: Long) {
+        lyricsOffsetMs = ms
+        prefs.edit().putLong("lyrics_offset_ms", lyricsOffsetMs).apply()
+        _state.value = _state.value.copy(offsetMs = lyricsOffsetMs)
+        updateCurrentPosition()
+    }
+
     fun getCurrentPositionMs(): Long {
         val basePos = if (!_state.value.isPlaying) {
             lastPositionMs

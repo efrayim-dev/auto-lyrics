@@ -1,7 +1,10 @@
 package com.autolyrics
 
+import android.Manifest
+import android.animation.ValueAnimator
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -16,6 +19,7 @@ import android.annotation.SuppressLint
 import android.content.SharedPreferences
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.LinearInterpolator
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.ImageView
@@ -24,6 +28,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.widget.SwitchCompat
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -32,6 +38,7 @@ import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.AlbumColors
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
+import com.autolyrics.util.AudioSyncHelper
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -65,6 +72,17 @@ class MainActivity : AppCompatActivity() {
     private var aaOffsetMs = 0L
     private var userScrolling = false
     private var userTouching = false
+
+    private var plainScrollAnimator: ValueAnimator? = null
+    private var lastPlainTrackTitle: String? = null
+
+    private lateinit var btnTapSync: Button
+    private lateinit var btnAutoSync: Button
+    private lateinit var tvSyncStatus: TextView
+    private var tapSyncActive = false
+    private var tapSyncTargetLineIndex = -1
+    private var tapSyncOffsets = mutableListOf<Long>()
+    private var audioSyncHelper: AudioSyncHelper? = null
 
     private val fontButtons = mutableMapOf<String, Button>()
     private val scrollResetRunnable = Runnable {
@@ -185,6 +203,13 @@ class MainActivity : AppCompatActivity() {
             updateAaDelayDisplay()
         }
 
+        btnTapSync = findViewById(R.id.btn_tap_sync)
+        btnAutoSync = findViewById(R.id.btn_auto_sync)
+        tvSyncStatus = findViewById(R.id.tv_sync_status)
+
+        btnTapSync.setOnClickListener { onTapSyncPressed() }
+        btnAutoSync.setOnClickListener { onAutoSyncPressed() }
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 mediaTracker.state.collect { state ->
@@ -210,6 +235,15 @@ class MainActivity : AppCompatActivity() {
                         tvSource.visibility = View.GONE
                     }
 
+                    if (state.status != LyricsStatus.PLAIN_ONLY) {
+                        stopPlainScroll()
+                    } else {
+                        plainScrollAnimator?.let { anim ->
+                            if (state.isPlaying && anim.isPaused) anim.resume()
+                            else if (!state.isPlaying && anim.isRunning) anim.pause()
+                        }
+                    }
+
                     when (state.status) {
                         LyricsStatus.NO_MEDIA -> {
                             tvLyrics.text = "Play a song to see lyrics here.\n\nLyrics will also appear on Android Auto."
@@ -227,6 +261,7 @@ class MainActivity : AppCompatActivity() {
                             renderSyncedLyrics(state)
                         }
                         LyricsStatus.PLAIN_ONLY -> {
+                            stopPlainScroll()
                             val sb = StringBuilder()
                             sb.append("ℹ  Lyrics are not synced to playback\n\n")
                             sb.append("─────────────────────\n\n")
@@ -234,7 +269,7 @@ class MainActivity : AppCompatActivity() {
                                 sb.append("${line.text}\n\n")
                             }
                             tvLyrics.text = sb.toString()
-                            scrollView.scrollTo(0, 0)
+                            startPlainScroll(state)
                         }
                     }
                 }
@@ -386,6 +421,13 @@ class MainActivity : AppCompatActivity() {
         updatePermissionUi()
     }
 
+    override fun onDestroy() {
+        audioSyncHelper?.stop()
+        audioSyncHelper = null
+        stopPlainScroll()
+        super.onDestroy()
+    }
+
     private fun updatePermissionUi() {
         val enabled = isNotificationListenerEnabled()
         if (enabled) {
@@ -490,7 +532,174 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun onTapSyncPressed() {
+        val state = mediaTracker.state.value
+        if (state.status != LyricsStatus.FOUND || !state.isPlaying) {
+            showSyncStatus("Play a synced song first")
+            return
+        }
+
+        if (!tapSyncActive) {
+            tapSyncActive = true
+            tapSyncOffsets.clear()
+            val nextIdx = (state.currentIndex + 1).coerceAtMost(state.lines.size - 1)
+            tapSyncTargetLineIndex = nextIdx
+            btnTapSync.text = "TAP when you hear line ${tapSyncOffsets.size + 1}/3"
+            showSyncStatus("Waiting for line: \"${state.lines.getOrNull(nextIdx)?.text?.take(30) ?: "..."}\"")
+        } else {
+            val targetLine = state.lines.getOrNull(tapSyncTargetLineIndex)
+            if (targetLine != null && targetLine.timeMs > 0) {
+                val rawPos = getCurrentRawPositionMs()
+                val offset = rawPos - targetLine.timeMs
+                tapSyncOffsets.add(offset)
+            }
+
+            if (tapSyncOffsets.size >= 3) {
+                val avgOffset = tapSyncOffsets.average().toLong()
+                mediaTracker.setOffset(avgOffset)
+                showSyncStatus("Synced: ${if (avgOffset >= 0) "+" else ""}${avgOffset}ms")
+                tapSyncActive = false
+                btnTapSync.text = "Tap to Sync"
+            } else {
+                val nextIdx = (state.currentIndex + 2).coerceAtMost(state.lines.size - 1)
+                tapSyncTargetLineIndex = nextIdx
+                btnTapSync.text = "TAP when you hear line ${tapSyncOffsets.size + 1}/3"
+                showSyncStatus("Waiting for line: \"${state.lines.getOrNull(nextIdx)?.text?.take(30) ?: "..."}\"")
+            }
+        }
+    }
+
+    private fun getCurrentRawPositionMs(): Long {
+        return try {
+            mediaTracker.getCurrentPositionMs() - mediaTracker.state.value.offsetMs
+        } catch (_: Exception) { 0L }
+    }
+
+    private fun showSyncStatus(text: String) {
+        tvSyncStatus.text = text
+        tvSyncStatus.visibility = View.VISIBLE
+        handler.removeCallbacksAndMessages("sync_status")
+        handler.postDelayed({
+            if (!tapSyncActive) {
+                tvSyncStatus.visibility = View.GONE
+            }
+        }, 8000)
+    }
+
+    private fun onAutoSyncPressed() {
+        val state = mediaTracker.state.value
+        if (state.status != LyricsStatus.FOUND || !state.isPlaying) {
+            showSyncStatus("Play a synced song first")
+            return
+        }
+
+        if (audioSyncHelper != null) {
+            audioSyncHelper?.stop()
+            audioSyncHelper = null
+            btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
+            showSyncStatus("Cancelled")
+            return
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), RC_MIC)
+            return
+        }
+
+        startAudioSync()
+    }
+
+    private fun startAudioSync() {
+        val state = mediaTracker.state.value
+        if (state.status != LyricsStatus.FOUND) return
+
+        val rawPos = getCurrentRawPositionMs()
+        btnAutoSync.text = "Cancel"
+
+        audioSyncHelper = AudioSyncHelper(
+            context = this,
+            onResult = { offsetMs ->
+                runOnUiThread {
+                    mediaTracker.setOffset(offsetMs)
+                    showSyncStatus("Synced: ${if (offsetMs >= 0) "+" else ""}${offsetMs}ms")
+                    btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
+                    audioSyncHelper = null
+                }
+            },
+            onStatus = { msg ->
+                runOnUiThread { showSyncStatus(msg) }
+            },
+            onError = { msg ->
+                runOnUiThread {
+                    showSyncStatus(msg)
+                    btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
+                    audioSyncHelper = null
+                }
+            }
+        )
+        audioSyncHelper?.start(state.lines, rawPos)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == RC_MIC && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startAudioSync()
+        } else if (requestCode == RC_MIC) {
+            showSyncStatus("Microphone permission denied")
+        }
+    }
+
+    private fun startPlainScroll(state: LyricsState) {
+        val durationMs = state.track?.durationMs ?: 0
+        if (durationMs <= 0 || state.lines.isEmpty()) {
+            scrollView.scrollTo(0, 0)
+            return
+        }
+
+        val trackTitle = state.track?.title
+        val isNewTrack = trackTitle != lastPlainTrackTitle
+        lastPlainTrackTitle = trackTitle
+
+        tvLyrics.post {
+            val maxScroll = tvLyrics.height - scrollView.height
+            if (maxScroll <= 0) return@post
+
+            val posMs = try {
+                mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
+            } catch (_: Exception) { 0L }
+            val remainingMs = (durationMs - posMs).coerceAtLeast(0)
+            val startFraction = posMs.toFloat() / durationMs
+            val startScrollY = (startFraction * maxScroll).toInt().coerceIn(0, maxScroll)
+
+            if (isNewTrack || !userScrolling) {
+                scrollView.scrollTo(0, startScrollY)
+            }
+
+            plainScrollAnimator?.cancel()
+            plainScrollAnimator = ValueAnimator.ofInt(startScrollY, maxScroll).apply {
+                duration = remainingMs
+                interpolator = LinearInterpolator()
+                addUpdateListener { anim ->
+                    if (!userScrolling) {
+                        scrollView.scrollTo(0, anim.animatedValue as Int)
+                    }
+                }
+                start()
+                if (!state.isPlaying) pause()
+            }
+        }
+    }
+
+    private fun stopPlainScroll() {
+        plainScrollAnimator?.cancel()
+        plainScrollAnimator = null
+        lastPlainTrackTitle = null
+    }
+
     companion object {
+        private const val RC_MIC = 1001
         private val DEFAULT_BG = Color.parseColor("#121212")
         private val DEFAULT_APP_BAR = Color.parseColor("#1E1E2E")
         private val DEFAULT_DELAY_BAR = Color.parseColor("#1A1A2A")

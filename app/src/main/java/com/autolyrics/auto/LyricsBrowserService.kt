@@ -1,6 +1,7 @@
 package com.autolyrics.auto
 
 import android.content.SharedPreferences
+import android.graphics.Bitmap
 import android.media.session.MediaController
 import android.media.session.PlaybackState
 import android.os.Bundle
@@ -34,6 +35,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private var displayedStatus: LyricsStatus? = null
     private var displayedTrackTitle: String? = null
     private var lastSubtitleText: String? = null
+    private var lastAlbumArt: Bitmap? = null
 
     private var aaKaraokeEnabled = true
     private var aaOffsetMs = 0L
@@ -58,6 +60,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         private const val NOTIFY_THROTTLE_MS = 800L
         private const val BROWSE_KARAOKE_WINDOW_MS = 1000L
         private const val SUBTITLE_KARAOKE_WINDOW_MS = 400L
+        private const val SESSION_REFRESH_MS = 2500L
     }
 
     override fun onCreate() {
@@ -86,6 +89,27 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             while (isActive) {
                 delay(300)
                 updateSubtitleKaraoke()
+            }
+        }
+
+        scope.launch {
+            while (isActive) {
+                delay(NOTIFY_THROTTLE_MS)
+                val state = mediaTracker.state.value
+                if (state.isPlaying && state.status == LyricsStatus.PLAIN_ONLY && state.lines.isNotEmpty()) {
+                    throttledNotifyChildren(state)
+                }
+            }
+        }
+
+        scope.launch {
+            while (isActive) {
+                delay(SESSION_REFRESH_MS)
+                val state = mediaTracker.state.value
+                if (state.isPlaying && state.track != null) {
+                    mediaSession.isActive = true
+                    mediaSession.setPlaybackState(buildPlaybackState(state))
+                }
             }
         }
     }
@@ -136,14 +160,29 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             }
             LyricsStatus.PLAIN_ONLY -> {
                 addTrackHeader(state, items)
-                items.add(buildTextItem("info", "ℹ  Lyrics are not synced to playback"))
-                val maxLines = minOf(state.lines.size, WINDOW_SIZE - 1)
-                for (i in 0 until maxLines) {
-                    val text = state.lines[i].text.ifBlank { "♪" }
-                    items.add(buildTextItem("line_$i", text))
-                }
                 if (state.lines.isEmpty()) {
                     items.add(buildTextItem("empty", "♪"))
+                } else {
+                    val durationMs = state.track?.durationMs ?: 0
+                    val posMs = try {
+                        mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
+                    } catch (_: Exception) { 0L }
+
+                    val estimatedIdx = if (durationMs > 0) {
+                        ((posMs.toFloat() / durationMs) * state.lines.size).toInt()
+                            .coerceIn(0, state.lines.size - 1)
+                    } else { 0 }
+
+                    val half = WINDOW_SIZE / 2
+                    val winStart = maxOf(0, estimatedIdx - half)
+                    val winEnd = minOf(state.lines.size, winStart + WINDOW_SIZE)
+                    val adjStart = maxOf(0, winEnd - WINDOW_SIZE)
+
+                    for (i in adjStart until winEnd) {
+                        val prefix = if (i == estimatedIdx) "▶  " else "    "
+                        val text = state.lines[i].text.ifBlank { "♪" }
+                        items.add(buildTextItem("line_$i", "$prefix$text"))
+                    }
                 }
             }
         }
@@ -285,33 +324,39 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     private fun getSubtitleText(state: LyricsState): String {
         val posMs = getAaPositionMs()
-        val lineIdx = if (state.status == LyricsStatus.FOUND) {
-            findLineIndex(state.lines, posMs)
-        } else {
-            -1
+
+        if (state.status == LyricsStatus.FOUND) {
+            val lineIdx = findLineIndex(state.lines, posMs)
+            val line = state.lines.getOrNull(lineIdx)
+            if (line != null) {
+                return if (aaKaraokeEnabled && line.words.isNotEmpty()) {
+                    buildKaraokeText(line, posMs, SUBTITLE_KARAOKE_WINDOW_MS)
+                } else {
+                    line.text
+                }
+            }
         }
 
-        val line = state.lines.getOrNull(lineIdx)
-        if (line != null) {
-            return if (aaKaraokeEnabled && line.words.isNotEmpty()) {
-                buildKaraokeText(line, posMs, SUBTITLE_KARAOKE_WINDOW_MS)
-            } else {
-                line.text
-            }
+        if (state.status == LyricsStatus.PLAIN_ONLY && state.lines.isNotEmpty()) {
+            val durationMs = state.track?.durationMs ?: 0
+            val idx = if (durationMs > 0) {
+                ((posMs.toFloat() / durationMs) * state.lines.size).toInt()
+                    .coerceIn(0, state.lines.size - 1)
+            } else { 0 }
+            return state.lines[idx].text
         }
 
         return when (state.status) {
             LyricsStatus.LOADING -> "Loading lyrics…"
             LyricsStatus.NOT_FOUND -> "No lyrics found"
             LyricsStatus.ERROR -> "Error loading lyrics"
-            LyricsStatus.PLAIN_ONLY -> state.lines.firstOrNull()?.text ?: ""
             else -> ""
         }
     }
 
     // --- MediaSession management ---
 
-    private fun buildBaseMetadata(state: LyricsState): MediaMetadataCompat.Builder {
+    private fun buildBaseMetadata(state: LyricsState, includeArt: Boolean = true): MediaMetadataCompat.Builder {
         val metaBuilder = MediaMetadataCompat.Builder()
 
         state.track?.let { track ->
@@ -330,20 +375,26 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             metaBuilder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_TITLE, displayTitle)
         }
 
-        state.albumArt?.let { art ->
-            metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art)
+        if (includeArt) {
+            state.albumArt?.let { art ->
+                metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, art)
+                lastAlbumArt = art
+            }
         }
 
         return metaBuilder
     }
 
     private fun updateMediaSession(state: LyricsState) {
-        if (state.track?.title != displayedTrackTitle) {
+        val trackChanged = state.track?.title != displayedTrackTitle
+        if (trackChanged) {
             mediaSession.isActive = true
             lastSubtitleText = null
+            lastAlbumArt = null
         }
 
-        val metaBuilder = buildBaseMetadata(state)
+        val artChanged = state.albumArt !== lastAlbumArt
+        val metaBuilder = buildBaseMetadata(state, includeArt = artChanged)
 
         val subtitleText = getSubtitleText(state)
         if (subtitleText.isNotBlank()) {
@@ -360,13 +411,14 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     private fun updateSubtitleKaraoke() {
         val state = mediaTracker.state.value
-        if (!state.isPlaying || state.status != LyricsStatus.FOUND) return
+        if (!state.isPlaying) return
+        if (state.status != LyricsStatus.FOUND && state.status != LyricsStatus.PLAIN_ONLY) return
 
         val subtitleText = getSubtitleText(state)
         if (subtitleText == lastSubtitleText) return
         lastSubtitleText = subtitleText
 
-        val metaBuilder = buildBaseMetadata(state)
+        val metaBuilder = buildBaseMetadata(state, includeArt = false)
         if (subtitleText.isNotBlank()) {
             metaBuilder.putString(
                 MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
@@ -374,6 +426,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             )
         }
         mediaSession.setMetadata(metaBuilder.build())
+        mediaSession.setPlaybackState(buildPlaybackState(state))
     }
 
     private fun buildPlaybackState(state: LyricsState): PlaybackStateCompat {
@@ -411,8 +464,21 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private fun computeWindow(state: LyricsState): WindowInfo {
         val lines = state.lines
         if (lines.isEmpty()) return WindowInfo(-1, -1, -1)
-        val posMs = getAaPositionMs()
-        val currentIdx = findLineIndex(lines, posMs).coerceAtLeast(0)
+
+        val currentIdx = if (state.status == LyricsStatus.PLAIN_ONLY) {
+            val durationMs = state.track?.durationMs ?: 0
+            val posMs = try {
+                mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
+            } catch (_: Exception) { 0L }
+            if (durationMs > 0) {
+                ((posMs.toFloat() / durationMs) * lines.size).toInt()
+                    .coerceIn(0, lines.size - 1)
+            } else 0
+        } else {
+            val posMs = getAaPositionMs()
+            findLineIndex(lines, posMs).coerceAtLeast(0)
+        }
+
         val half = WINDOW_SIZE / 2
         val windowStart = maxOf(0, currentIdx - half)
         val windowEnd = minOf(lines.size, windowStart + WINDOW_SIZE)
