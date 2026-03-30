@@ -108,6 +108,10 @@ class MediaTracker private constructor(context: Context) {
         updateCurrentPosition()
     }
 
+    fun resumePlayback() {
+        activeController?.transportControls?.play()
+    }
+
     fun setOffset(ms: Long) {
         lyricsOffsetMs = ms
         prefs.edit().putLong("lyrics_offset_ms", lyricsOffsetMs).apply()

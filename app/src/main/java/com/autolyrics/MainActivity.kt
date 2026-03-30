@@ -561,10 +561,9 @@ class MainActivity : AppCompatActivity() {
                 tapSyncActive = false
                 btnTapSync.text = "Tap to Sync"
             } else {
-                val nextIdx = (state.currentIndex + 2).coerceAtMost(state.lines.size - 1)
-                tapSyncTargetLineIndex = nextIdx
+                tapSyncTargetLineIndex = (tapSyncTargetLineIndex + 1).coerceAtMost(state.lines.size - 1)
                 btnTapSync.text = "TAP when you hear line ${tapSyncOffsets.size + 1}/3"
-                showSyncStatus("Waiting for line: \"${state.lines.getOrNull(nextIdx)?.text?.take(30) ?: "..."}\"")
+                showSyncStatus("Waiting for line: \"${state.lines.getOrNull(tapSyncTargetLineIndex)?.text?.take(30) ?: "..."}\"")
             }
         }
     }
@@ -575,15 +574,17 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { 0L }
     }
 
+    private val hideSyncStatusRunnable = Runnable {
+        if (!tapSyncActive) {
+            tvSyncStatus.visibility = View.GONE
+        }
+    }
+
     private fun showSyncStatus(text: String) {
         tvSyncStatus.text = text
         tvSyncStatus.visibility = View.VISIBLE
-        handler.removeCallbacksAndMessages("sync_status")
-        handler.postDelayed({
-            if (!tapSyncActive) {
-                tvSyncStatus.visibility = View.GONE
-            }
-        }, 8000)
+        handler.removeCallbacks(hideSyncStatusRunnable)
+        handler.postDelayed(hideSyncStatusRunnable, 8000)
     }
 
     private fun onAutoSyncPressed() {
@@ -637,6 +638,11 @@ class MainActivity : AppCompatActivity() {
                     btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
                     audioSyncHelper = null
                 }
+            },
+            onResumePlayback = {
+                mediaTracker.resumePlayback()
+                val newPos = getCurrentRawPositionMs()
+                audioSyncHelper?.updatePosition(newPos)
             }
         )
         audioSyncHelper?.start(state.lines, rawPos)

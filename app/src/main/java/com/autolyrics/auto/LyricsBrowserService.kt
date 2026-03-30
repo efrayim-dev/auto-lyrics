@@ -40,6 +40,10 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     private var aaKaraokeEnabled = true
     private var aaOffsetMs = 0L
 
+    private var lastKaraokeLineIdx = -1
+    private var lastKaraokeWordIdx = -1
+    private var lastKaraokeText: String? = null
+
     private val prefsListener =
         SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
             when (key) {
@@ -257,7 +261,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             val prefix = if (isCurrent) "▶  " else "    "
 
             val text = if (isCurrent && aaKaraokeEnabled && line.words.isNotEmpty()) {
-                buildKaraokeText(line, posMs, BROWSE_KARAOKE_WINDOW_MS)
+                buildKaraokeText(line, i, posMs, BROWSE_KARAOKE_WINDOW_MS)
             } else {
                 line.text.ifBlank { "♪" }
             }
@@ -295,7 +299,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         return idx
     }
 
-    private fun buildKaraokeText(line: LyricLine, posMs: Long, windowMs: Long): String {
+    private fun buildKaraokeText(line: LyricLine, lineIdx: Int, posMs: Long, windowMs: Long): String {
         val words = line.words
         if (words.isEmpty()) return line.text
 
@@ -306,12 +310,23 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         }
         if (currentIdx < 0) return line.text
 
+        val sameLine = lineIdx == lastKaraokeLineIdx
+        if (sameLine && currentIdx <= lastKaraokeWordIdx && lastKaraokeText != null) {
+            return lastKaraokeText!!
+        }
+
         var endIdx = currentIdx
         for (i in (currentIdx + 1) until words.size) {
             if (words[i].timeMs <= posMs + windowMs) endIdx = i
             else break
         }
 
+        if (sameLine) {
+            endIdx = maxOf(endIdx, lastKaraokeWordIdx)
+        }
+
+        lastKaraokeLineIdx = lineIdx
+        lastKaraokeWordIdx = currentIdx
         val sb = StringBuilder()
         for (i in words.indices) {
             if (i == currentIdx) sb.append("【")
@@ -319,7 +334,14 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             if (i == endIdx) sb.append("】")
             if (i < words.size - 1) sb.append(" ")
         }
-        return sb.toString()
+        lastKaraokeText = sb.toString()
+        return lastKaraokeText!!
+    }
+
+    private fun resetKaraokeState() {
+        lastKaraokeLineIdx = -1
+        lastKaraokeWordIdx = -1
+        lastKaraokeText = null
     }
 
     private fun getSubtitleText(state: LyricsState): String {
@@ -330,7 +352,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             val line = state.lines.getOrNull(lineIdx)
             if (line != null) {
                 return if (aaKaraokeEnabled && line.words.isNotEmpty()) {
-                    buildKaraokeText(line, posMs, SUBTITLE_KARAOKE_WINDOW_MS)
+                    buildKaraokeText(line, lineIdx, posMs, SUBTITLE_KARAOKE_WINDOW_MS)
                 } else {
                     line.text
                 }
@@ -391,6 +413,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             mediaSession.isActive = true
             lastSubtitleText = null
             lastAlbumArt = null
+            resetKaraokeState()
         }
 
         val artChanged = state.albumArt !== lastAlbumArt
@@ -491,6 +514,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         displayedWindowEnd = -1
         displayedCurrentIdx = -1
         lastNotifyTime = 0L
+        resetKaraokeState()
         notifyChildrenChanged(ROOT_ID)
     }
 
@@ -507,6 +531,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             lastNotifyTime = System.currentTimeMillis()
             handler.removeCallbacksAndMessages(null)
             pendingNotify = false
+            resetKaraokeState()
             notifyChildrenChanged(ROOT_ID)
             return
         }

@@ -3,6 +3,8 @@ package com.autolyrics.util
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -12,8 +14,10 @@ class AudioSyncHelper(
     private val context: Context,
     private val onResult: (offsetMs: Long) -> Unit,
     private val onStatus: (message: String) -> Unit,
-    private val onError: (message: String) -> Unit
+    private val onError: (message: String) -> Unit,
+    private val onResumePlayback: () -> Unit = {}
 ) {
+    private val resumeHandler = Handler(Looper.getMainLooper())
     private var speechRecognizer: SpeechRecognizer? = null
     private var lyrics: List<LyricLine> = emptyList()
     private var startTimeMs: Long = 0
@@ -42,6 +46,10 @@ class AudioSyncHelper(
             setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     onStatus("Listening... speak or play music")
+                    resumeHandler.postDelayed({
+                        onResumePlayback()
+                        resetPositionTracking()
+                    }, 300)
                 }
 
                 override fun onBeginningOfSpeech() {}
@@ -92,9 +100,19 @@ class AudioSyncHelper(
 
     fun stop() {
         active = false
+        resumeHandler.removeCallbacksAndMessages(null)
         speechRecognizer?.stopListening()
         speechRecognizer?.destroy()
         speechRecognizer = null
+    }
+
+    fun updatePosition(currentRawPositionMs: Long) {
+        currentPositionAtStart = currentRawPositionMs
+        startTimeMs = System.currentTimeMillis()
+    }
+
+    private fun resetPositionTracking() {
+        startTimeMs = System.currentTimeMillis()
     }
 
     private fun processPartialResults(matches: List<String>?, recognitionTime: Long) {
