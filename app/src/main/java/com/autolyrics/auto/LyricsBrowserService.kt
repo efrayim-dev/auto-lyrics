@@ -167,6 +167,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 if (state.lines.isEmpty()) {
                     items.add(buildTextItem("empty", "♪"))
                 } else {
+                    items.add(buildTextItem("unsync_note", "ℹ  Lyrics not synced"))
+
                     val durationMs = state.track?.durationMs ?: 0
                     val posMs = try {
                         mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
@@ -183,9 +185,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                     val adjStart = maxOf(0, winEnd - WINDOW_SIZE)
 
                     for (i in adjStart until winEnd) {
-                        val prefix = if (i == estimatedIdx) "▶  " else "    "
                         val text = state.lines[i].text.ifBlank { "♪" }
-                        items.add(buildTextItem("line_$i", "$prefix$text"))
+                        items.add(buildTextItem("line_$i", "    $text"))
                     }
                 }
             }
@@ -441,7 +442,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         if (subtitleText == lastSubtitleText) return
         lastSubtitleText = subtitleText
 
-        val metaBuilder = buildBaseMetadata(state, includeArt = false)
+        val needsArtRecovery = lastAlbumArt == null && state.albumArt != null
+        val metaBuilder = buildBaseMetadata(state, includeArt = needsArtRecovery)
         if (subtitleText.isNotBlank()) {
             metaBuilder.putString(
                 MediaMetadataCompat.METADATA_KEY_DISPLAY_SUBTITLE,
