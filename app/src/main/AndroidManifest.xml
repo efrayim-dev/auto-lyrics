@@ -27,6 +27,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Performance / Karaoke Mode -->
+        <activity
+            android:name=".PerformanceActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AutoLyrics" />
+
         <!-- Notification Listener for Media Session access -->
         <service
             android:name=".media.MediaListenerService"

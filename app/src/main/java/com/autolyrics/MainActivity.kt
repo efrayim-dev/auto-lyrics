@@ -144,6 +144,10 @@ class MainActivity : AppCompatActivity() {
                 View.GONE else View.VISIBLE
         }
 
+        findViewById<Button>(R.id.btn_performance_mode).setOnClickListener {
+            startActivity(Intent(this, PerformanceActivity::class.java))
+        }
+
         findViewById<Button>(R.id.btn_font_size_minus).setOnClickListener {
             if (lyricsFontSizeSp > 12) {
                 lyricsFontSizeSp -= 2
