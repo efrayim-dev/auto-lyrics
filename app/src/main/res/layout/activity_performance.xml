@@ -72,6 +72,19 @@
                 android:visibility="gone" />
         </LinearLayout>
 
+        <!-- Previous lyric line -->
+        <TextView
+            android:id="@+id/perf_prev_line"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:textColor="#444444"
+            android:textSize="18sp"
+            android:lineSpacingMultiplier="1.2"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp"
+            android:paddingBottom="8dp" />
+
         <!-- Current lyric line -->
         <TextView
             android:id="@+id/perf_current_line"

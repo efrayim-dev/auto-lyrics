@@ -1,5 +1,6 @@
 package com.autolyrics
 
+import android.animation.ValueAnimator
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -11,6 +12,7 @@ import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
@@ -22,6 +24,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.autolyrics.media.MediaTracker
+import com.autolyrics.model.LyricLine
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
 import kotlinx.coroutines.launch
@@ -35,12 +38,14 @@ class PerformanceActivity : AppCompatActivity() {
     private lateinit var trackTitle: TextView
     private lateinit var trackArtist: TextView
     private lateinit var sourceLabel: TextView
+    private lateinit var prevLine: TextView
     private lateinit var currentLine: TextView
     private lateinit var nextLine: TextView
     private lateinit var exitHint: TextView
 
     private var lastRenderedIndex = -1
     private var lastRenderedWord = -1
+    private var wordPopAnimator: ValueAnimator? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +61,7 @@ class PerformanceActivity : AppCompatActivity() {
         trackTitle = findViewById(R.id.perf_track_title)
         trackArtist = findViewById(R.id.perf_track_artist)
         sourceLabel = findViewById(R.id.perf_source)
+        prevLine = findViewById(R.id.perf_prev_line)
         currentLine = findViewById(R.id.perf_current_line)
         nextLine = findViewById(R.id.perf_next_line)
         exitHint = findViewById(R.id.perf_exit_hint)
@@ -69,6 +75,12 @@ class PerformanceActivity : AppCompatActivity() {
                 mediaTracker.state.collect { state -> render(state) }
             }
         }
+    }
+
+    override fun onDestroy() {
+        wordPopAnimator?.cancel()
+        wordPopAnimator = null
+        super.onDestroy()
     }
 
     private fun enterImmersiveMode() {
@@ -108,18 +120,22 @@ class PerformanceActivity : AppCompatActivity() {
 
         when (state.status) {
             LyricsStatus.NO_MEDIA -> {
+                prevLine.text = ""
                 currentLine.text = "Play a song"
                 nextLine.text = ""
             }
             LyricsStatus.LOADING -> {
+                prevLine.text = ""
                 currentLine.text = "Loading lyrics…"
                 nextLine.text = ""
             }
             LyricsStatus.NOT_FOUND -> {
+                prevLine.text = ""
                 currentLine.text = "No lyrics found"
                 nextLine.text = ""
             }
             LyricsStatus.ERROR -> {
+                prevLine.text = ""
                 currentLine.text = "Error loading lyrics"
                 nextLine.text = ""
             }
@@ -135,6 +151,7 @@ class PerformanceActivity : AppCompatActivity() {
     private fun renderPlain(state: LyricsState) {
         val lines = state.lines
         if (lines.isEmpty()) {
+            prevLine.text = ""
             currentLine.text = "♪"
             nextLine.text = ""
             return
@@ -150,8 +167,9 @@ class PerformanceActivity : AppCompatActivity() {
                 .coerceIn(0, lines.size - 1)
         } else 0
 
+        updateSideLine(prevLine, lines.getOrNull(idx - 1)?.text)
         currentLine.text = lines[idx].text.ifBlank { "♪" }
-        nextLine.text = lines.getOrNull(idx + 1)?.text ?: ""
+        updateSideLine(nextLine, lines.getOrNull(idx + 1)?.text)
     }
 
     private fun renderSynced(state: LyricsState, accentColor: Int) {
@@ -160,52 +178,84 @@ class PerformanceActivity : AppCompatActivity() {
         val lines = state.lines
 
         if (idx < 0 || idx >= lines.size) {
+            prevLine.text = ""
             currentLine.text = "♪"
             nextLine.text = ""
             return
         }
 
-        val needsFullRedraw = idx != lastRenderedIndex || wordIdx != lastRenderedWord
-        if (!needsFullRedraw) return
+        val lineChanged = idx != lastRenderedIndex
+        val wordChanged = wordIdx != lastRenderedWord
+        if (!lineChanged && !wordChanged) return
 
         lastRenderedIndex = idx
         lastRenderedWord = wordIdx
+
+        if (lineChanged) {
+            updateSideLine(prevLine, lines.getOrNull(idx - 1)?.text)
+            updateSideLine(nextLine, lines.getOrNull(idx + 1)?.text)
+        }
 
         val line = lines[idx]
         val hasKaraoke = line.words.isNotEmpty()
 
         if (hasKaraoke && wordIdx >= 0) {
-            val ssb = SpannableStringBuilder()
+            wordPopAnimator?.cancel()
+
             val baseSizePx = currentLine.textSize.toInt()
-            val popSizePx = (baseSizePx * 1.5).toInt()
-            val accentBg = setAlpha(accentColor, 0.25f)
+            val targetSizePx = (baseSizePx * 1.5).toInt()
+            val accentBg = setAlpha(accentColor, 0.30f)
 
-            line.words.forEachIndexed { wi, word ->
-                val start = ssb.length
-                ssb.append(word.text)
-                val end = ssb.length
-
-                if (wi == wordIdx) {
-                    ssb.setSpan(AbsoluteSizeSpan(popSizePx), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    ssb.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    ssb.setSpan(ForegroundColorSpan(accentColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    ssb.setSpan(BackgroundColorSpan(accentBg), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            wordPopAnimator = ValueAnimator.ofFloat(1.0f, 1.5f).apply {
+                duration = 220
+                interpolator = OvershootInterpolator(1.5f)
+                addUpdateListener { anim ->
+                    val scale = anim.animatedValue as Float
+                    val sizePx = (baseSizePx * scale).toInt()
+                    currentLine.text = buildKaraokeSpannable(
+                        line, wordIdx, sizePx, accentColor, accentBg
+                    )
                 }
-
-                if (wi < line.words.size - 1) ssb.append(" ")
+                start()
             }
-            currentLine.text = ssb
         } else {
+            wordPopAnimator?.cancel()
             currentLine.text = line.text.ifBlank { "♪" }
         }
+    }
 
-        val nextText = lines.getOrNull(idx + 1)?.text ?: ""
-        if (nextLine.text.toString() != nextText) {
-            nextLine.animate().alpha(0f).setDuration(120).withEndAction {
-                nextLine.text = nextText
-                nextLine.animate().alpha(1f).setDuration(200).start()
-            }.start()
+    private fun buildKaraokeSpannable(
+        line: LyricLine,
+        activeWordIdx: Int,
+        activeSizePx: Int,
+        accentColor: Int,
+        accentBg: Int
+    ): SpannableStringBuilder {
+        val ssb = SpannableStringBuilder()
+        line.words.forEachIndexed { wi, word ->
+            val start = ssb.length
+            ssb.append(word.text)
+            val end = ssb.length
+
+            if (wi == activeWordIdx) {
+                ssb.setSpan(AbsoluteSizeSpan(activeSizePx), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                ssb.setSpan(StyleSpan(Typeface.BOLD), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                ssb.setSpan(ForegroundColorSpan(accentColor), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                ssb.setSpan(BackgroundColorSpan(accentBg), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+
+            if (wi < line.words.size - 1) ssb.append(" ")
         }
+        return ssb
+    }
+
+    private fun updateSideLine(tv: TextView, text: String?) {
+        val newText = text ?: ""
+        if (tv.text.toString() == newText) return
+        tv.animate().alpha(0f).setDuration(100).withEndAction {
+            tv.text = newText
+            tv.animate().alpha(1f).setDuration(180).start()
+        }.start()
     }
 
     companion object {

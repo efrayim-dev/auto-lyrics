@@ -1,10 +1,8 @@
 package com.autolyrics
 
-import android.Manifest
 import android.animation.ValueAnimator
 import android.content.ComponentName
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -28,8 +26,6 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.widget.SwitchCompat
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -38,7 +34,6 @@ import com.autolyrics.media.MediaTracker
 import com.autolyrics.model.AlbumColors
 import com.autolyrics.model.LyricsState
 import com.autolyrics.model.LyricsStatus
-import com.autolyrics.util.AudioSyncHelper
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -77,12 +72,10 @@ class MainActivity : AppCompatActivity() {
     private var lastPlainTrackTitle: String? = null
 
     private lateinit var btnTapSync: Button
-    private lateinit var btnAutoSync: Button
     private lateinit var tvSyncStatus: TextView
     private var tapSyncActive = false
     private var tapSyncTargetLineIndex = -1
     private var tapSyncOffsets = mutableListOf<Long>()
-    private var audioSyncHelper: AudioSyncHelper? = null
 
     private val fontButtons = mutableMapOf<String, Button>()
     private val scrollResetRunnable = Runnable {
@@ -208,11 +201,26 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnTapSync = findViewById(R.id.btn_tap_sync)
-        btnAutoSync = findViewById(R.id.btn_auto_sync)
         tvSyncStatus = findViewById(R.id.tv_sync_status)
 
         btnTapSync.setOnClickListener { onTapSyncPressed() }
-        btnAutoSync.setOnClickListener { onAutoSyncPressed() }
+
+        findViewById<Button>(R.id.btn_quick_minus_1s).setOnClickListener {
+            mediaTracker.adjustOffset(-1000)
+            showSyncStatus("Offset: ${formatOffset(mediaTracker.state.value.offsetMs)}")
+        }
+        findViewById<Button>(R.id.btn_quick_minus_half).setOnClickListener {
+            mediaTracker.adjustOffset(-500)
+            showSyncStatus("Offset: ${formatOffset(mediaTracker.state.value.offsetMs)}")
+        }
+        findViewById<Button>(R.id.btn_quick_plus_half).setOnClickListener {
+            mediaTracker.adjustOffset(500)
+            showSyncStatus("Offset: ${formatOffset(mediaTracker.state.value.offsetMs)}")
+        }
+        findViewById<Button>(R.id.btn_quick_plus_1s).setOnClickListener {
+            mediaTracker.adjustOffset(1000)
+            showSyncStatus("Offset: ${formatOffset(mediaTracker.state.value.offsetMs)}")
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -426,8 +434,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        audioSyncHelper?.stop()
-        audioSyncHelper = null
         stopPlainScroll()
         super.onDestroy()
     }
@@ -591,74 +597,9 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(hideSyncStatusRunnable, 8000)
     }
 
-    private fun onAutoSyncPressed() {
-        val state = mediaTracker.state.value
-        if (state.status != LyricsStatus.FOUND || !state.isPlaying) {
-            showSyncStatus("Play a synced song first")
-            return
-        }
-
-        if (audioSyncHelper != null) {
-            audioSyncHelper?.stop()
-            audioSyncHelper = null
-            btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
-            showSyncStatus("Cancelled")
-            return
-        }
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), RC_MIC)
-            return
-        }
-
-        startAudioSync()
-    }
-
-    private fun startAudioSync() {
-        val state = mediaTracker.state.value
-        if (state.status != LyricsStatus.FOUND) return
-
-        val rawPos = getCurrentRawPositionMs()
-        btnAutoSync.text = "Cancel"
-
-        audioSyncHelper = AudioSyncHelper(
-            context = this,
-            onResult = { offsetMs ->
-                runOnUiThread {
-                    mediaTracker.setOffset(offsetMs)
-                    showSyncStatus("Synced: ${if (offsetMs >= 0) "+" else ""}${offsetMs}ms")
-                    btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
-                    audioSyncHelper = null
-                }
-            },
-            onStatus = { msg ->
-                runOnUiThread { showSyncStatus(msg) }
-            },
-            onError = { msg ->
-                runOnUiThread {
-                    showSyncStatus(msg)
-                    btnAutoSync.text = "\uD83C\uDFA4 Auto Sync"
-                    audioSyncHelper = null
-                }
-            },
-            onResumePlayback = {
-                mediaTracker.resumePlayback()
-                val newPos = getCurrentRawPositionMs()
-                audioSyncHelper?.updatePosition(newPos)
-            }
-        )
-        audioSyncHelper?.start(state.lines, rawPos)
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == RC_MIC && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startAudioSync()
-        } else if (requestCode == RC_MIC) {
-            showSyncStatus("Microphone permission denied")
-        }
+    private fun formatOffset(ms: Long): String {
+        val sign = if (ms >= 0) "+" else ""
+        return "${sign}${ms}ms"
     }
 
     private fun startPlainScroll(state: LyricsState) {
@@ -709,7 +650,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val RC_MIC = 1001
         private val DEFAULT_BG = Color.parseColor("#121212")
         private val DEFAULT_APP_BAR = Color.parseColor("#1E1E2E")
         private val DEFAULT_DELAY_BAR = Color.parseColor("#1A1A2A")

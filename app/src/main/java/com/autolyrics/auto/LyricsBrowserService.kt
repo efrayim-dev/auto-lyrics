@@ -60,8 +60,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     companion object {
         private const val ROOT_ID = "root"
-        private const val WINDOW_SIZE = 4
-        private const val PLAIN_WINDOW_SIZE = 5
+        private const val WINDOW_SIZE = 3
+        private const val PLAIN_WINDOW_SIZE = 4
         private const val PAD_WIDTH = 60
         private const val NOTIFY_THROTTLE_MS = 800L
         private const val BROWSE_KARAOKE_WINDOW_MS = 1000L

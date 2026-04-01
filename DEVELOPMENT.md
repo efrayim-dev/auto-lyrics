@@ -89,8 +89,8 @@ AutoLyricsApp (Application)
 
 | Constant | Value | Purpose |
 |---|---|---|
-| `WINDOW_SIZE` | 4 | Number of synced lyric lines in the AA browse tree window. |
-| `PLAIN_WINDOW_SIZE` | 5 | Number of unsynced lyric lines in the AA browse tree window. |
+| `WINDOW_SIZE` | 3 | Number of synced lyric lines in the AA browse tree window. |
+| `PLAIN_WINDOW_SIZE` | 4 | Number of unsynced lyric lines in the AA browse tree window. |
 | `PAD_WIDTH` | 60 | Character padding for browse tree items (reduces choppiness). |
 | `NOTIFY_THROTTLE_MS` | 800ms | Minimum interval between browse tree refreshes. |
 | `BROWSE_KARAOKE_WINDOW_MS` | 1000ms | Karaoke bracket time window for browse tree items. |
