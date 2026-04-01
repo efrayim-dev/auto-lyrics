@@ -554,8 +554,10 @@ class MainActivity : AppCompatActivity() {
             tapSyncOffsets.clear()
             val nextIdx = (state.currentIndex + 1).coerceAtMost(state.lines.size - 1)
             tapSyncTargetLineIndex = nextIdx
-            btnTapSync.text = "TAP when you hear line ${tapSyncOffsets.size + 1}/3"
-            showSyncStatus("Waiting for line: \"${state.lines.getOrNull(nextIdx)?.text?.take(30) ?: "..."}\"")
+            setTapSyncActiveStyle(true)
+            btnTapSync.text = "⏎  TAP when you hear it (1/3)"
+            val lineText = state.lines.getOrNull(nextIdx)?.text?.take(60) ?: "…"
+            showSyncStatus("Listen for:\n\"$lineText\"")
         } else {
             val targetLine = state.lines.getOrNull(tapSyncTargetLineIndex)
             if (targetLine != null && targetLine.timeMs > 0) {
@@ -567,14 +569,30 @@ class MainActivity : AppCompatActivity() {
             if (tapSyncOffsets.size >= 3) {
                 val avgOffset = tapSyncOffsets.average().toLong()
                 mediaTracker.setOffset(avgOffset)
-                showSyncStatus("Synced: ${if (avgOffset >= 0) "+" else ""}${avgOffset}ms")
+                showSyncStatus("Synced! Offset: ${formatOffset(avgOffset)}")
                 tapSyncActive = false
+                setTapSyncActiveStyle(false)
                 btnTapSync.text = "Tap to Sync"
             } else {
                 tapSyncTargetLineIndex = (tapSyncTargetLineIndex + 1).coerceAtMost(state.lines.size - 1)
-                btnTapSync.text = "TAP when you hear line ${tapSyncOffsets.size + 1}/3"
-                showSyncStatus("Waiting for line: \"${state.lines.getOrNull(tapSyncTargetLineIndex)?.text?.take(30) ?: "..."}\"")
+                btnTapSync.text = "⏎  TAP when you hear it (${tapSyncOffsets.size + 1}/3)"
+                val lineText = state.lines.getOrNull(tapSyncTargetLineIndex)?.text?.take(60) ?: "…"
+                showSyncStatus("Listen for:\n\"$lineText\"")
             }
+        }
+    }
+
+    private fun setTapSyncActiveStyle(active: Boolean) {
+        if (active) {
+            btnTapSync.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#4A2A6E")
+            )
+            btnTapSync.setTextColor(Color.parseColor("#EEDDFF"))
+        } else {
+            btnTapSync.backgroundTintList = android.content.res.ColorStateList.valueOf(
+                Color.parseColor("#2A2A3E")
+            )
+            btnTapSync.setTextColor(Color.parseColor("#CCCCDD"))
         }
     }
 
