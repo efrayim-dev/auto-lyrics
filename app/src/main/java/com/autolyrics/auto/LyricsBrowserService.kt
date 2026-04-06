@@ -545,8 +545,10 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val win = computeWindow(state)
         val windowChanged = win.start != displayedWindowStart || win.end != displayedWindowEnd
         val lineChanged = win.currentIdx != displayedCurrentIdx
+        val karaokeActive = aaKaraokeEnabled && state.status == LyricsStatus.FOUND
+            && state.lines.getOrNull(state.currentIndex)?.words?.isNotEmpty() == true
 
-        if (!windowChanged && !lineChanged && !statusChanged) return
+        if (!windowChanged && !lineChanged && !statusChanged && !karaokeActive) return
 
         displayedWindowStart = win.start
         displayedWindowEnd = win.end
