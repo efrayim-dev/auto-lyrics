@@ -63,11 +63,11 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         private const val WINDOW_SIZE = 3
         private const val PLAIN_WINDOW_SIZE = 4
         private const val PAD_WIDTH = 60
-        private const val NOTIFY_THROTTLE_MS = 800L
-        private const val BROWSE_KARAOKE_WINDOW_MS = 1000L
-        private const val SUBTITLE_KARAOKE_WINDOW_MS = 400L
-        private const val SESSION_REFRESH_MS = 2500L
-        private const val PLAIN_LOOP_DELAY_MS = 3000L
+        private const val NOTIFY_THROTTLE_MS = 500L
+        private const val BROWSE_KARAOKE_WINDOW_MS = 600L
+        private const val SUBTITLE_KARAOKE_WINDOW_MS = 300L
+        private const val SESSION_REFRESH_MS = 1500L
+        private const val PLAIN_LOOP_DELAY_MS = 2000L
     }
 
     override fun onCreate() {
@@ -94,7 +94,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
         scope.launch {
             while (isActive) {
-                delay(300)
+                delay(200)
                 updateSubtitleKaraoke()
             }
         }
