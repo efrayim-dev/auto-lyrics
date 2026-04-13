@@ -42,9 +42,11 @@ object LrcLibClient {
             if (exact?.syncedLyrics != null) return exact
         }
 
-        // Priority 2: search for synced lyrics
+        // Priority 2: search for synced lyrics (duration-guarded)
         val searchResults = searchAll(trackName, artistName)
-        val syncedResult = searchResults.firstOrNull { it.syncedLyrics != null }
+        val syncedResult = searchResults.firstOrNull {
+            it.syncedLyrics != null && withinDuration(it, durationSec)
+        }
         if (syncedResult != null) return syncedResult
 
         // Priority 3: exact match without album for synced lyrics
@@ -59,11 +61,18 @@ object LrcLibClient {
             if (exact?.plainLyrics != null) return exact
         }
 
-        // Priority 5: search result with plain lyrics
-        val plainResult = searchResults.firstOrNull { it.plainLyrics != null }
+        // Priority 5: search result with plain lyrics (duration-guarded)
+        val plainResult = searchResults.firstOrNull {
+            it.plainLyrics != null && withinDuration(it, durationSec)
+        }
         if (plainResult != null) return plainResult
 
         return null
+    }
+
+    private fun withinDuration(result: LrcLibResponse, durationSec: Int): Boolean {
+        if (durationSec <= 0 || result.duration == null) return true
+        return kotlin.math.abs(result.duration - durationSec) <= 10
     }
 
     private fun getExact(
