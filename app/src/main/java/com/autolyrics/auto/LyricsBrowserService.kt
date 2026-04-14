@@ -120,6 +120,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 if (state.isPlaying && state.track != null) {
                     mediaSession.isActive = true
                     mediaSession.setPlaybackState(buildPlaybackState(state))
+                    notifyChildrenChanged(ROOT_ID)
+                    notifyChildrenChanged(SYNC_MENU_ID)
                 }
             }
         }
@@ -155,6 +157,17 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             return
         }
 
+        if (parentId == SYNC_MINUS_ID || parentId == SYNC_PLUS_ID) {
+            if (parentId == SYNC_MINUS_ID) aaOffsetMs -= SYNC_STEP_MS
+            else aaOffsetMs += SYNC_STEP_MS
+            getSharedPreferences("auto_lyrics_prefs", MODE_PRIVATE)
+                .edit().putLong("aa_offset_ms", aaOffsetMs).apply()
+            notifyChildrenChanged(ROOT_ID)
+            buildSyncMenu(state, items)
+            result.sendResult(items)
+            return
+        }
+
         when (state.status) {
             LyricsStatus.NO_MEDIA -> {
                 items.add(buildTextItem("no_media", "Play a song to see lyrics"))
@@ -174,15 +187,13 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             LyricsStatus.FOUND -> {
                 addTrackHeader(state, items)
                 buildWindowedLyrics(state, items)
-                items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, lyricsTypeLabel(state), "Adjust offset"))
             }
             LyricsStatus.PLAIN_ONLY -> {
                 addTrackHeader(state, items)
                 if (state.lines.isEmpty()) {
                     items.add(buildTextItem("empty", "♪"))
                 } else {
-                    items.add(buildTextItem("unsync_note", "ℹ  Lyrics not synced"))
-
                     val durationMs = state.track?.durationMs ?: 0
                     val posMs = try {
                         mediaTracker.getCurrentPositionMs().coerceAtLeast(0)
@@ -203,7 +214,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                         items.add(buildTextItem("line_$i", "    $text", pad = true))
                     }
                 }
-                items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
+                items.add(buildBrowsableItem(SYNC_MENU_ID, lyricsTypeLabel(state), "Adjust offset"))
             }
         }
 
@@ -228,12 +239,19 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                         .coerceIn(0, state.lines.size - 1)
                 } else 0
             }
-            items.add(buildTextItem("sync_cur", "▶  ${state.lines.getOrNull(idx)?.text ?: "♪"}", pad = true))
+
+            val curLine = state.lines.getOrNull(idx)
+            val curText = if (curLine != null && aaKaraokeEnabled && curLine.words.isNotEmpty()) {
+                buildKaraokeText(curLine, idx, posMs, BROWSE_KARAOKE_WINDOW_MS)
+            } else {
+                curLine?.text ?: "♪"
+            }
+            items.add(buildTextItem("sync_cur", "▶  $curText", pad = true))
             items.add(buildTextItem("sync_next", "    ${state.lines.getOrNull(idx + 1)?.text ?: ""}", pad = true))
         }
 
-        items.add(buildTextItem(SYNC_MINUS_ID, "⏪  − 50ms"))
-        items.add(buildTextItem(SYNC_PLUS_ID, "⏩  + 50ms"))
+        items.add(buildBrowsableItem(SYNC_MINUS_ID, "⏪  − 50ms", ""))
+        items.add(buildBrowsableItem(SYNC_PLUS_ID, "⏩  + 50ms", ""))
     }
 
     private fun addTrackHeader(
@@ -333,6 +351,17 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 .build(),
             MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
         )
+    }
+
+    private fun lyricsTypeLabel(state: LyricsState): String {
+        return when (state.status) {
+            LyricsStatus.FOUND -> {
+                val hasKaraoke = state.lines.any { it.words.isNotEmpty() }
+                if (hasKaraoke && aaKaraokeEnabled) "⟳ Karaoke" else "⟳ Synced"
+            }
+            LyricsStatus.PLAIN_ONLY -> "⟳ Not synced"
+            else -> "⟳ Sync"
+        }
     }
 
     // --- Karaoke helpers ---
@@ -668,28 +697,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         }
 
         override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
-            if (mediaId == null) return
-
-            when (mediaId) {
-                SYNC_MINUS_ID -> {
-                    aaOffsetMs -= SYNC_STEP_MS
-                    val prefs = getSharedPreferences("auto_lyrics_prefs", MODE_PRIVATE)
-                    prefs.edit().putLong("aa_offset_ms", aaOffsetMs).apply()
-                    notifyChildrenChanged(SYNC_MENU_ID)
-                    notifyChildrenChanged(ROOT_ID)
-                    return
-                }
-                SYNC_PLUS_ID -> {
-                    aaOffsetMs += SYNC_STEP_MS
-                    val prefs = getSharedPreferences("auto_lyrics_prefs", MODE_PRIVATE)
-                    prefs.edit().putLong("aa_offset_ms", aaOffsetMs).apply()
-                    notifyChildrenChanged(SYNC_MENU_ID)
-                    notifyChildrenChanged(ROOT_ID)
-                    return
-                }
-            }
-
-            if (!mediaId.startsWith("line_")) return
+            if (mediaId == null || !mediaId.startsWith("line_")) return
             val index = mediaId.removePrefix("line_").toIntOrNull() ?: return
             val state = mediaTracker.state.value
             if (state.status != LyricsStatus.FOUND) return
