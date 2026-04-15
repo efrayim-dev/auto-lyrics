@@ -47,5 +47,7 @@ data class LyricsState(
     val source: String = "",
     val offsetMs: Long = 0,
     val albumArt: Bitmap? = null,
-    val albumColors: AlbumColors? = null
+    val albumColors: AlbumColors? = null,
+    val translatedLines: List<String>? = null,
+    val detectedLanguage: String? = null
 )

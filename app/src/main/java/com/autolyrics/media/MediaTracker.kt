@@ -12,6 +12,7 @@ import android.os.SystemClock
 import com.autolyrics.lyrics.LrcLibClient
 import com.autolyrics.lyrics.LrcParser
 import com.autolyrics.lyrics.LyricsCache
+import com.autolyrics.lyrics.LyricsTranslator
 import com.autolyrics.lyrics.MetadataCleaner
 import com.autolyrics.lyrics.SyncLrcClient
 import com.autolyrics.model.LyricLine
@@ -42,6 +43,7 @@ class MediaTracker private constructor(context: Context) {
     private var fetchJob: Job? = null
     private var prefetchJob: Job? = null
     private var artJob: Job? = null
+    private var translationJob: Job? = null
     private var pendingTrack: TrackInfo? = null
     private var pendingArt: Bitmap? = null
     private var lyricsOffsetMs: Long = 0L
@@ -66,6 +68,7 @@ class MediaTracker private constructor(context: Context) {
         val current = _state.value.track
         if (track.title == current?.title && track.artist == current.artist) return@Runnable
 
+        translationJob?.cancel()
         _state.value = _state.value.copy(
             track = track,
             lines = emptyList(),
@@ -74,7 +77,9 @@ class MediaTracker private constructor(context: Context) {
             status = LyricsStatus.LOADING,
             source = "",
             albumArt = art,
-            albumColors = null
+            albumColors = null,
+            translatedLines = null,
+            detectedLanguage = null
         )
         fetchLyrics(track)
         extractAlbumColors(art)
@@ -269,6 +274,7 @@ class MediaTracker private constructor(context: Context) {
                         if (status == LyricsStatus.FOUND) {
                             updateCurrentPosition()
                         }
+                        translateIfNeeded(lines, track)
                     }
 
                     val cacheAge = lyricsCache.getAge(track.title, track.artist)
@@ -295,6 +301,7 @@ class MediaTracker private constructor(context: Context) {
                         if (result.status == LyricsStatus.FOUND) {
                             updateCurrentPosition()
                         }
+                        translateIfNeeded(result.lines, track)
                     } else if (cached == null) {
                         _state.value = _state.value.copy(
                             status = LyricsStatus.NOT_FOUND,
@@ -422,6 +429,24 @@ class MediaTracker private constructor(context: Context) {
         }
 
         return null
+    }
+
+    private fun translateIfNeeded(lines: List<LyricLine>, track: TrackInfo) {
+        if (!prefs.getBoolean("translation_enabled", true)) return
+        translationJob?.cancel()
+        translationJob = scope.launch(Dispatchers.IO) {
+            try {
+                val result = LyricsTranslator.translateLines(lines) ?: return@launch
+                withContext(Dispatchers.Main) {
+                    if (_state.value.track == track) {
+                        _state.value = _state.value.copy(
+                            translatedLines = result.translatedLines,
+                            detectedLanguage = result.detectedLanguage
+                        )
+                    }
+                }
+            } catch (_: Exception) { }
+        }
     }
 
     companion object {

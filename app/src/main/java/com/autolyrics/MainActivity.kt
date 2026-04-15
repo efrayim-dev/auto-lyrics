@@ -12,6 +12,7 @@ import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.BackgroundColorSpan
 import android.text.style.ForegroundColorSpan
+import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
 import android.annotation.SuppressLint
 import android.content.SharedPreferences
@@ -57,6 +58,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fontSettingsPanel: LinearLayout
     private lateinit var tvFontSize: TextView
     private lateinit var switchAaKaraoke: SwitchCompat
+    private lateinit var switchTranslation: SwitchCompat
     private lateinit var tvAaDelay: TextView
     private lateinit var btnJumpToCurrent: Button
     private lateinit var prefs: SharedPreferences
@@ -184,6 +186,12 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean("aa_karaoke_enabled", isChecked).apply()
         }
 
+        switchTranslation = findViewById(R.id.switch_translation)
+        switchTranslation.isChecked = prefs.getBoolean("translation_enabled", true)
+        switchTranslation.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("translation_enabled", isChecked).apply()
+        }
+
         findViewById<Button>(R.id.btn_aa_delay_minus).setOnClickListener {
             aaOffsetMs -= 100
             prefs.edit().putLong("aa_offset_ms", aaOffsetMs).apply()
@@ -241,7 +249,10 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     if (state.source.isNotBlank()) {
-                        tvSource.text = state.source
+                        val srcText = if (state.detectedLanguage != null) {
+                            "${state.source} · ${state.detectedLanguage}→en"
+                        } else state.source
+                        tvSource.text = srcText
                         tvSource.visibility = View.VISIBLE
                     } else {
                         tvSource.visibility = View.GONE
@@ -274,13 +285,33 @@ class MainActivity : AppCompatActivity() {
                         }
                         LyricsStatus.PLAIN_ONLY -> {
                             stopPlainScroll()
-                            val sb = StringBuilder()
+                            val hasTrans = state.translatedLines != null
+                            val sb = SpannableStringBuilder()
                             sb.append("ℹ  Lyrics are not synced to playback\n\n")
                             sb.append("─────────────────────\n\n")
-                            state.lines.forEach { line ->
-                                sb.append("${line.text}\n\n")
+                            val dimColor = state.albumColors?.textDim ?: DEFAULT_DIM
+                            state.lines.forEachIndexed { i, line ->
+                                sb.append("${line.text}\n")
+                                if (hasTrans) {
+                                    val tl = state.translatedLines?.getOrNull(i)
+                                    if (!tl.isNullOrBlank()) {
+                                        val tlStart = sb.length
+                                        sb.append("$tl\n")
+                                        sb.setSpan(
+                                            RelativeSizeSpan(0.8f),
+                                            tlStart, sb.length,
+                                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                                        )
+                                        sb.setSpan(
+                                            ForegroundColorSpan(dimColor),
+                                            tlStart, sb.length,
+                                            Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                                        )
+                                    }
+                                }
+                                sb.append("\n")
                             }
-                            tvLyrics.text = sb.toString()
+                            tvLyrics.text = sb
                             startPlainScroll(state)
                         }
                     }
@@ -411,6 +442,23 @@ class MainActivity : AppCompatActivity() {
                 ssb.setSpan(
                     ForegroundColorSpan(dimColor),
                     lineStart, ssb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+            }
+
+            val translatedLine = state.translatedLines?.getOrNull(i)
+            if (!translatedLine.isNullOrBlank()) {
+                ssb.append("\n")
+                val tlStart = ssb.length
+                ssb.append("    $translatedLine")
+                ssb.setSpan(
+                    RelativeSizeSpan(0.8f),
+                    tlStart, ssb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                ssb.setSpan(
+                    ForegroundColorSpan(dimColor),
+                    tlStart, ssb.length,
                     Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
                 )
             }

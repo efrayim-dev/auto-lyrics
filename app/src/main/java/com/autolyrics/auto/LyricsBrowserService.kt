@@ -211,7 +211,8 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
                     for (i in adjStart until winEnd) {
                         val text = state.lines[i].text.ifBlank { "♪" }
-                        items.add(buildTextItem("line_$i", "    $text", pad = true))
+                        val trans = state.translatedLines?.getOrNull(i)?.takeIf { it.isNotBlank() }
+                        items.add(buildTextItem("line_$i", "    $text", pad = true, subtitle = trans))
                     }
                 }
                 items.add(buildBrowsableItem(SYNC_MENU_ID, lyricsTypeLabel(state), "Adjust offset"))
@@ -246,8 +247,10 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             } else {
                 curLine?.text ?: "♪"
             }
-            items.add(buildTextItem("sync_cur", "▶  $curText", pad = true))
-            items.add(buildTextItem("sync_next", "    ${state.lines.getOrNull(idx + 1)?.text ?: ""}", pad = true))
+            val curTrans = state.translatedLines?.getOrNull(idx)?.takeIf { it.isNotBlank() }
+            items.add(buildTextItem("sync_cur", "▶  $curText", pad = true, subtitle = curTrans))
+            val nextTrans = state.translatedLines?.getOrNull(idx + 1)?.takeIf { it.isNotBlank() }
+            items.add(buildTextItem("sync_next", "    ${state.lines.getOrNull(idx + 1)?.text ?: ""}", pad = true, subtitle = nextTrans))
         }
 
         items.add(buildBrowsableItem(SYNC_MINUS_ID, "⏪  − 50ms", ""))
@@ -327,17 +330,19 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 line.text.ifBlank { "♪" }
             }
 
-            items.add(buildTextItem("line_$i", "$prefix$text", pad = true))
+            val trans = state.translatedLines?.getOrNull(i)?.takeIf { it.isNotBlank() }
+            items.add(buildTextItem("line_$i", "$prefix$text", pad = true, subtitle = trans))
         }
     }
 
-    private fun buildTextItem(id: String, text: String, pad: Boolean = false): MediaBrowserCompat.MediaItem {
+    private fun buildTextItem(id: String, text: String, pad: Boolean = false, subtitle: String? = null): MediaBrowserCompat.MediaItem {
         val title = if (pad) text.padEnd(PAD_WIDTH) else text
+        val builder = MediaDescriptionCompat.Builder()
+            .setMediaId(id)
+            .setTitle(title)
+        if (!subtitle.isNullOrBlank()) builder.setSubtitle(subtitle)
         return MediaBrowserCompat.MediaItem(
-            MediaDescriptionCompat.Builder()
-                .setMediaId(id)
-                .setTitle(title)
-                .build(),
+            builder.build(),
             MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
         )
     }
@@ -354,12 +359,14 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
     }
 
     private fun lyricsTypeLabel(state: LyricsState): String {
+        val lang = state.detectedLanguage?.uppercase()
+        val suffix = if (lang != null) " · $lang" else ""
         return when (state.status) {
             LyricsStatus.FOUND -> {
                 val hasKaraoke = state.lines.any { it.words.isNotEmpty() }
-                if (hasKaraoke && aaKaraokeEnabled) "⟳ Karaoke" else "⟳ Synced"
+                if (hasKaraoke && aaKaraokeEnabled) "⟳ Karaoke$suffix" else "⟳ Synced$suffix"
             }
-            LyricsStatus.PLAIN_ONLY -> "⟳ Not synced"
+            LyricsStatus.PLAIN_ONLY -> "⟳ Not synced$suffix"
             else -> "⟳ Sync"
         }
     }
@@ -435,11 +442,13 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             val lineIdx = findLineIndex(state.lines, posMs)
             val line = state.lines.getOrNull(lineIdx)
             if (line != null) {
-                return if (aaKaraokeEnabled && line.words.isNotEmpty()) {
+                val original = if (aaKaraokeEnabled && line.words.isNotEmpty()) {
                     buildKaraokeText(line, lineIdx, posMs, SUBTITLE_KARAOKE_WINDOW_MS)
                 } else {
                     line.text
                 }
+                val trans = state.translatedLines?.getOrNull(lineIdx)?.takeIf { it.isNotBlank() }
+                return if (trans != null) "$original\n$trans" else original
             }
         }
 
@@ -449,7 +458,9 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 ((posMs.toFloat() / durationMs) * state.lines.size).toInt()
                     .coerceIn(0, state.lines.size - 1)
             } else { 0 }
-            return state.lines[idx].text
+            val original = state.lines[idx].text
+            val trans = state.translatedLines?.getOrNull(idx)?.takeIf { it.isNotBlank() }
+            return if (trans != null) "$original\n$trans" else original
         }
 
         return when (state.status) {

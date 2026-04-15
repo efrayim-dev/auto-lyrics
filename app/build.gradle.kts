@@ -11,8 +11,8 @@ android {
         applicationId = "com.autolyrics"
         minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "1.8.8"
+        versionCode = 24
+        versionName = "1.9.0"
     }
 
     signingConfigs {
@@ -64,6 +64,10 @@ dependencies {
 
     // Color extraction from album art
     implementation("androidx.palette:palette-ktx:1.0.0")
+
+    // ML Kit — on-device language detection & translation
+    implementation("com.google.mlkit:language-id:17.0.6")
+    implementation("com.google.mlkit:translate:17.0.3")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
