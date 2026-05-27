@@ -45,7 +45,8 @@
         <!-- Android Auto Media Browser Service -->
         <service
             android:name=".auto.LyricsBrowserService"
-            android:exported="true">
+            android:exported="true"
+            android:label="Lyrics">
             <intent-filter>
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>

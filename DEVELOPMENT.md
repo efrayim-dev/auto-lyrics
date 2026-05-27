@@ -35,7 +35,7 @@ AutoLyricsApp (Application)
 
   Android Auto
   ├─ LyricsBrowserService (MediaBrowserServiceCompat)
-  │   ├─ Browse tree (onLoadChildren) — windowed lyrics list
+  │   ├─ Browse tree (onLoadChildren) — flat single-level: track header + windowed lyrics + sync controls
   │   ├─ MediaSession — metadata (title, art, subtitle), playback state
   │   ├─ Karaoke bracket builder — buildKaraokeText()
   │   └─ Transport controls proxy — forwards play/pause/seek to source player
@@ -92,11 +92,11 @@ AutoLyricsApp (Application)
 | `WINDOW_SIZE` | 3 | Number of synced lyric lines in the AA browse tree window. |
 | `PLAIN_WINDOW_SIZE` | 4 | Number of unsynced lyric lines in the AA browse tree window. |
 | `PAD_WIDTH` | 60 | Character padding for browse tree items (reduces choppiness). |
-| `NOTIFY_THROTTLE_MS` | 800ms | Minimum interval between browse tree refreshes. |
-| `BROWSE_KARAOKE_WINDOW_MS` | 1000ms | Karaoke bracket time window for browse tree items. |
-| `SUBTITLE_KARAOKE_WINDOW_MS` | 400ms | Karaoke bracket time window for now-playing subtitle. |
-| `SESSION_REFRESH_MS` | 2500ms | Periodic MediaSession playback state refresh interval. |
-| `PLAIN_LOOP_DELAY_MS` | 3000ms | Plain lyrics browse tree periodic advance interval. |
+| `NOTIFY_THROTTLE_MS` | 500ms | Minimum interval between browse tree refreshes. |
+| `BROWSE_KARAOKE_WINDOW_MS` | 600ms | Karaoke bracket time window for browse tree items. |
+| `SUBTITLE_KARAOKE_WINDOW_MS` | 300ms | Karaoke bracket time window for now-playing subtitle. |
+| `SESSION_REFRESH_MS` | 1500ms | Periodic MediaSession playback state refresh interval. |
+| `PLAIN_LOOP_DELAY_MS` | 2000ms | Plain lyrics browse tree periodic advance interval. |
 
 ## SharedPreferences Keys (`auto_lyrics_prefs`)
 
