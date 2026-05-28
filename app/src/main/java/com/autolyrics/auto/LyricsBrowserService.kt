@@ -60,6 +60,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
 
     companion object {
         private const val ROOT_ID = "root"
+        private const val SYNC_MENU_ID = "sync_menu"
         private const val SYNC_MINUS_ID = "sync_minus"
         private const val SYNC_PLUS_ID = "sync_plus"
         private const val SYNC_STEP_MS = 50L
@@ -119,7 +120,6 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 if (state.isPlaying && state.track != null) {
                     mediaSession.isActive = true
                     mediaSession.setPlaybackState(buildPlaybackState(state))
-                    notifyChildrenChanged(ROOT_ID)
                 }
             }
         }
@@ -149,6 +149,17 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         val state = mediaTracker.state.value
         val items = mutableListOf<MediaBrowserCompat.MediaItem>()
 
+        if (parentId == SYNC_MENU_ID) {
+            buildSyncMenu(state, items)
+            result.sendResult(items)
+            return
+        }
+
+        if (parentId == SYNC_MINUS_ID || parentId == SYNC_PLUS_ID) {
+            result.sendResult(items)
+            return
+        }
+
         when (state.status) {
             LyricsStatus.NO_MEDIA -> {
                 items.add(buildTextItem("no_media", "Play a song to see lyrics"))
@@ -168,7 +179,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             LyricsStatus.FOUND -> {
                 addTrackHeader(state, items)
                 buildWindowedLyrics(state, items)
-                addSyncControls(items)
+                items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
             }
             LyricsStatus.PLAIN_ONLY -> {
                 addTrackHeader(state, items)
@@ -196,16 +207,45 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                         items.add(buildTextItem("line_$i", "    $text", pad = true, subtitle = trans))
                     }
                 }
-                addSyncControls(items)
+                items.add(buildBrowsableItem(SYNC_MENU_ID, "⟳ Sync", "Adjust offset"))
             }
         }
 
         result.sendResult(items)
     }
 
-    private fun addSyncControls(items: MutableList<MediaBrowserCompat.MediaItem>) {
+    private fun buildSyncMenu(
+        state: LyricsState,
+        items: MutableList<MediaBrowserCompat.MediaItem>
+    ) {
         val sign = if (aaOffsetMs >= 0) "+" else ""
-        items.add(buildTextItem(SYNC_MINUS_ID, "⏪  − 50ms", subtitle = "AA Offset: ${sign}${aaOffsetMs}ms"))
+        items.add(buildTextItem("sync_offset", "AA Offset: ${sign}${aaOffsetMs}ms"))
+
+        if (state.lines.isNotEmpty()) {
+            val posMs = getAaPositionMs()
+            val idx = if (state.status == LyricsStatus.FOUND) {
+                findLineIndex(state.lines, posMs).coerceAtLeast(0)
+            } else {
+                val durationMs = state.track?.durationMs ?: 0
+                if (durationMs > 0) {
+                    ((posMs.toFloat() / durationMs) * state.lines.size).toInt()
+                        .coerceIn(0, state.lines.size - 1)
+                } else 0
+            }
+
+            val curLine = state.lines.getOrNull(idx)
+            val curText = if (curLine != null && aaKaraokeEnabled && curLine.words.isNotEmpty()) {
+                buildKaraokeText(curLine, idx, posMs, BROWSE_KARAOKE_WINDOW_MS)
+            } else {
+                curLine?.text ?: "♪"
+            }
+            val curTrans = state.translatedLines?.getOrNull(idx)?.takeIf { it.isNotBlank() }
+            items.add(buildTextItem("sync_cur", "▶  $curText", pad = true, subtitle = curTrans))
+            val nextTrans = state.translatedLines?.getOrNull(idx + 1)?.takeIf { it.isNotBlank() }
+            items.add(buildTextItem("sync_next", "    ${state.lines.getOrNull(idx + 1)?.text ?: ""}", pad = true, subtitle = nextTrans))
+        }
+
+        items.add(buildTextItem(SYNC_MINUS_ID, "⏪  − 50ms"))
         items.add(buildTextItem(SYNC_PLUS_ID, "⏩  + 50ms"))
     }
 
@@ -301,6 +341,17 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         return MediaBrowserCompat.MediaItem(
             builder.build(),
             MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
+        )
+    }
+
+    private fun buildBrowsableItem(id: String, title: String, subtitle: String): MediaBrowserCompat.MediaItem {
+        return MediaBrowserCompat.MediaItem(
+            MediaDescriptionCompat.Builder()
+                .setMediaId(id)
+                .setTitle(title)
+                .setSubtitle(subtitle)
+                .build(),
+            MediaBrowserCompat.MediaItem.FLAG_BROWSABLE
         )
     }
 
@@ -557,6 +608,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         lastNotifyTime = 0L
         resetKaraokeState()
         notifyChildrenChanged(ROOT_ID)
+        notifyChildrenChanged(SYNC_MENU_ID)
     }
 
     private fun throttledNotifyChildren(state: LyricsState) {
@@ -574,6 +626,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
             pendingNotify = false
             resetKaraokeState()
             notifyChildrenChanged(ROOT_ID)
+            notifyChildrenChanged(SYNC_MENU_ID)
             return
         }
 
@@ -596,12 +649,14 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
         if (elapsed >= NOTIFY_THROTTLE_MS) {
             lastNotifyTime = now
             notifyChildrenChanged(ROOT_ID)
+            notifyChildrenChanged(SYNC_MENU_ID)
         } else if (!pendingNotify) {
             pendingNotify = true
             handler.postDelayed({
                 pendingNotify = false
                 lastNotifyTime = System.currentTimeMillis()
                 notifyChildrenChanged(ROOT_ID)
+                notifyChildrenChanged(SYNC_MENU_ID)
             }, NOTIFY_THROTTLE_MS - elapsed)
         }
     }
@@ -658,6 +713,7 @@ class LyricsBrowserService : MediaBrowserServiceCompat() {
                 getSharedPreferences("auto_lyrics_prefs", MODE_PRIVATE)
                     .edit().putLong("aa_offset_ms", aaOffsetMs).apply()
                 notifyChildrenChanged(ROOT_ID)
+                notifyChildrenChanged(SYNC_MENU_ID)
                 return
             }
 
